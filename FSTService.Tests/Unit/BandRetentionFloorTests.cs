@@ -107,6 +107,236 @@ public sealed class BandRetentionFloorTests : IDisposable
         Assert.True(belowFloor > 0, "The floor never applied, so the comparison proves nothing.");
     }
 
+    [Theory]
+    [InlineData(11)]
+    [InlineData(12)]
+    [InlineData(13)]
+    [InlineData(14)]
+    public void Enforced_floor_in_direct_upserts_leaves_the_same_rows_as_writing_everything(int seed)
+    {
+        var random = new Random(seed);
+        var registered = new HashSet<string>(["reg-1"], StringComparer.OrdinalIgnoreCase);
+        var enforced = Persistence(_enforced);
+        var baseline = Persistence(_baseline);
+        var songs = new[] { "song-a", "song-b" };
+        foreach (var song in songs)
+        {
+            var board = GenerateBoard(random, song, 14);
+            Upsert(enforced, song, board);
+            Upsert(baseline, song, board);
+        }
+
+        enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+        baseline.PruneBandEntriesDetailed(registered, MaxValid);
+
+        long belowFloor = 0;
+        for (var round = 0; round < 3; round++)
+        {
+            var staged = songs.ToDictionary(
+                static song => song,
+                song => GenerateStagedPage(random, song, ReadKeys(_baseline, song), round));
+
+            // Extraction reuses the scrape's prepared filter.
+            var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+            filter.PrepareForFlush(_enforced.DataSource);
+            foreach (var (song, entries) in staged)
+            {
+                using (var conn = enforced.DataSource.OpenConnection())
+                using (var tx = conn.BeginTransaction())
+                {
+                    enforced.UpsertBandEntriesDirect(song, BandType, entries, conn, tx, rebuildTeamMembership: false, retentionFloor: filter);
+                    tx.Commit();
+                }
+
+                Upsert(baseline, song, entries);
+            }
+
+            belowFloor += filter.BelowFloorRows;
+            var pruned = enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+            baseline.PruneBandEntriesDetailed(registered, MaxValid);
+
+            Assert.Equal(0, pruned.RetentionFloor!.ShadowRowsKept);
+            Assert.Equal(Snapshot(_baseline), Snapshot(_enforced));
+        }
+
+        Assert.True(belowFloor > 0, "The floor never applied, so the comparison proves nothing.");
+    }
+
+    [Fact]
+    public void Unprepared_or_disabled_filter_is_not_prepared_for_writers_after_the_flush()
+    {
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        Assert.True(filter.IsActive);
+        Assert.False(filter.IsPrepared);
+
+        filter.PrepareForFlush(_enforced.DataSource);
+        Assert.True(filter is { IsActive: true, IsPrepared: true });
+
+        Execute(_enforced, "INSERT INTO band_retention_floor_shadow (song_id, band_type, team_key, instrument_combo, score, end_time_key) VALUES ('s', 'Band_Duets', 't', '0:1', 1, '')");
+        var pending = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        pending.PrepareForFlush(_enforced.DataSource);
+        Assert.True(pending.PendingEvidence);
+        Assert.False(pending.IsActive);
+    }
+
+    private static readonly BandPruneScopeOptions ChangedScopes =
+        new(ChangedScopesOnly: true, FullPruneInterval: TimeSpan.FromHours(24), ChangeSafetyMargin: TimeSpan.Zero);
+
+    [Theory]
+    [InlineData(21)]
+    [InlineData(22)]
+    [InlineData(23)]
+    public void Changed_scope_prune_matches_a_full_prune(int seed)
+    {
+        var random = new Random(seed);
+        var registered = new HashSet<string>(["reg-1"], StringComparer.OrdinalIgnoreCase);
+        var changed = Persistence(_enforced);
+        var full = Persistence(_baseline);
+        var songs = new[] { "song-a", "song-b", "song-c", "song-d" };
+        foreach (var song in songs)
+        {
+            var board = GenerateBoard(random, song, 14);
+            Upsert(changed, song, board);
+            Upsert(full, song, board);
+        }
+
+        // No recorded prune yet, so this one prunes everything.
+        changed.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+        full.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+        var fullPruneAt = ReadPruneState(_enforced).LastFullPruneAt;
+        var untouchedFloor = ReadFloorTimes(_enforced)["song-d"];
+
+        for (var round = 0; round < 3; round++)
+        {
+            Thread.Sleep(20);
+            foreach (var song in new[] { "song-a", "song-b" })
+            {
+                var staged = GenerateStagedPage(random, song, ReadKeys(_baseline, song), round);
+                Upsert(changed, song, staged);
+                Upsert(full, song, staged);
+            }
+
+            // An over-threshold flip alone also marks its scope changed.
+            var flipKey = ReadKeys(_baseline, "song-c")[round];
+            var flip = EntryForMembers(flipKey.Split(':'), ReadScore(_baseline, "song-c", flipKey), isOverThreshold: round % 2 == 0);
+            Upsert(changed, "song-c", [flip]);
+            Upsert(full, "song-c", [flip]);
+
+            changed.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+            full.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+
+            Assert.Equal(Snapshot(_baseline), Snapshot(_enforced));
+            Assert.Equal(ReadFloors(_baseline), ReadFloors(_enforced));
+        }
+
+        Assert.Equal(fullPruneAt, ReadPruneState(_enforced).LastFullPruneAt);
+        Assert.Equal(untouchedFloor, ReadFloorTimes(_enforced)["song-d"]);
+        Assert.NotEqual(untouchedFloor, ReadFloorTimes(_enforced)["song-a"]);
+    }
+
+    [Fact]
+    public void Changed_scope_prune_runs_in_full_after_the_interval_or_a_window_change()
+    {
+        var persistence = Persistence(_enforced);
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in new[] { "song-a", "song-b" })
+            Upsert(persistence, song, Enumerable.Range(0, 8).Select(i => Entry($"{song}-team-{i}", 800 - (i * 10))).ToList());
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+        var first = ReadFloorTimes(_enforced);
+
+        Thread.Sleep(20);
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+        Assert.Equal(first, ReadFloorTimes(_enforced));
+
+        Execute(_enforced, "UPDATE band_prune_state SET last_full_prune_at = now() - interval '25 hours'");
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+        var afterInterval = ReadFloorTimes(_enforced);
+        Assert.All(afterInterval, floor => Assert.True(floor.Value > first[floor.Key]));
+        Assert.True(ReadPruneState(_enforced).LastFullPruneAt > DateTime.UtcNow.AddHours(-1));
+
+        Thread.Sleep(20);
+        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid - 1, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+        Assert.Equal(2, result.DeletedEntries);
+        Assert.Equal(MaxValid - 1, ReadPruneState(_enforced).MaxValidEntries);
+    }
+
+    [Fact]
+    public void Changed_scope_prune_does_not_count_skipped_rows_of_unchanged_scopes_as_kept()
+    {
+        var persistence = Persistence(_enforced);
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in new[] { "song-a", "song-b" })
+            Upsert(persistence, song, Enumerable.Range(0, 8).Select(i => Entry($"{song}-team-{i}", 800 - (i * 10))).ToList());
+        persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+
+        Thread.Sleep(20);
+        Upsert(persistence, "song-a", [Entry("song-a-new", 900)]);
+        Execute(_enforced, """
+            INSERT INTO band_retention_floor_shadow (song_id, band_type, team_key, instrument_combo, score, end_time_key)
+            VALUES ('song-b', 'Band_Duets', 'skipped-x:skipped-y', '0:1', 10, '')
+            """);
+
+        var result = persistence.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0, scopeOptions: ChangedScopes);
+
+        Assert.Equal((1L, 0L), (result.RetentionFloor!.ShadowRows, result.RetentionFloor.ShadowRowsKept));
+        Assert.Equal(1, result.DeletedEntries);
+    }
+
+    [Fact]
+    public void Direct_upsert_over_threshold_change_updates_last_updated_at()
+    {
+        var persistence = Persistence(_enforced);
+        Upsert(persistence, "song-a", [Entry("team", 500)]);
+        var before = ReadLastUpdated(_enforced, TeamKey("team"));
+
+        Thread.Sleep(20);
+        Upsert(persistence, "song-a", [Entry("team", 500, isOverThreshold: true)]);
+
+        Assert.True(ReadLastUpdated(_enforced, TeamKey("team")) > before);
+    }
+
+    private static int ReadScore(InMemoryMetaDatabase fixture, string songId, string teamKey)
+    {
+        using var conn = fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT score FROM band_entries WHERE song_id = @songId AND team_key = @teamKey";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private static DateTime ReadLastUpdated(InMemoryMetaDatabase fixture, string teamKey)
+    {
+        using var conn = fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT last_updated_at FROM band_entries WHERE team_key = @teamKey";
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        return (DateTime)cmd.ExecuteScalar()!;
+    }
+
+    private static Dictionary<string, DateTime> ReadFloorTimes(InMemoryMetaDatabase fixture)
+    {
+        using var conn = fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT song_id, computed_at FROM band_retention_floor";
+        var times = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            times[reader.GetString(0)] = reader.GetDateTime(1);
+        return times;
+    }
+
+    private static (DateTime LastFullPruneAt, int MaxValidEntries) ReadPruneState(InMemoryMetaDatabase fixture)
+    {
+        using var conn = fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT last_full_prune_at, max_valid_entries FROM band_prune_state";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        return (reader.GetDateTime(0), reader.GetInt32(1));
+    }
+
     [Fact]
     public async Task Report_mode_keeps_rows_and_prune_reports_no_survivors()
     {

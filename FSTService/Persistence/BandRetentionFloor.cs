@@ -62,6 +62,15 @@ public static class BandRetentionFloorSchema
         -- Keys of the rows at smaller candidate margins below the window's last row,
         -- recorded with each floor so the next prune can report which smaller margin
         -- would also have been safe.
+        -- When band prune last ran, and last ran over every scope, for the
+        -- changed-scope prune.
+        CREATE TABLE IF NOT EXISTS band_prune_state (
+            id                 BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            last_prune_at      TIMESTAMPTZ NOT NULL,
+            last_full_prune_at TIMESTAMPTZ NOT NULL,
+            max_valid_entries  INT         NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS band_retention_floor_margin_keys (
             song_id      TEXT NOT NULL,
             band_type    TEXT NOT NULL,
@@ -235,6 +244,13 @@ public sealed class BandRetentionFloorFilter
     public int MaxValidEntries { get; }
 
     public bool IsActive => Mode != BandRetentionFloorMode.Off && !_disabled;
+
+    /// <summary>
+    /// Whether <see cref="PrepareForFlush"/> ran for this scrape. Writers after
+    /// the flush (band extraction) use the filter only when it is active and
+    /// prepared, so a skipped flush also skips the floor.
+    /// </summary>
+    public bool IsPrepared => Volatile.Read(ref _prepared) == 1;
 
     /// <summary>Turns the filter off for the rest of this scrape (for example when preparation failed).</summary>
     public void Disable() => _disabled = true;

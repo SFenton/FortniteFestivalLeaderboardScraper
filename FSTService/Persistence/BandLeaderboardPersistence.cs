@@ -235,7 +235,7 @@ public sealed class BandLeaderboardPersistence
                         percentile = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.percentile ELSE band_entries.percentile END,
                         end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
                         is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
-                        last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                        last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
                     WHERE EXCLUDED.score > band_entries.score
                        OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold
                     """;
@@ -389,7 +389,8 @@ public sealed class BandLeaderboardPersistence
     public (int Bands, int Members, int Lookups) UpsertBandEntriesDirect(
         string songId, string bandType, IReadOnlyList<BandLeaderboardEntry> entries,
         NpgsqlConnection conn, NpgsqlTransaction tx,
-        bool rebuildTeamMembership = true)
+        bool rebuildTeamMembership = true,
+        BandRetentionFloorFilter? retentionFloor = null)
     {
         if (entries.Count == 0)
             return (0, 0, 0);
@@ -461,6 +462,32 @@ public sealed class BandLeaderboardPersistence
             writer.Complete();
         }
 
+        if (retentionFloor is { IsActive: true }
+            && retentionFloor.Apply(conn, tx) > 0
+            && retentionFloor.Mode == BandRetentionFloorMode.Enforce)
+        {
+            // Skipped rows were not stored, so their member stats and lookups
+            // must not be written either.
+            var kept = new HashSet<(string TeamKey, string InstrumentCombo)>();
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "SELECT DISTINCT team_key, instrument_combo FROM _be_staging";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    kept.Add((reader.GetString(0), reader.GetString(1)));
+            }
+
+            entries = entries
+                .Where(entry => kept.Contains((entry.TeamKey, entry.InstrumentCombo)))
+                .ToArray();
+            impactedTeamKeys = entries
+                .Select(static entry => entry.TeamKey)
+                .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
         int merged;
         using (var cmd = conn.CreateCommand())
         {
@@ -491,7 +518,7 @@ public sealed class BandLeaderboardPersistence
                     percentile = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.percentile ELSE band_entries.percentile END,
                     end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
                     is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
-                    last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                    last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
                 WHERE EXCLUDED.score > band_entries.score
                    OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold
                 """;
@@ -672,6 +699,13 @@ public sealed class BandLeaderboardPersistence
     /// </summary>
     public static readonly IReadOnlyList<int> DefaultRetentionFloorMarginCandidates = [0, 5, 10, 25, 50];
 
+    /// <summary>
+    /// How far before the previous prune the changed-scope prune looks for
+    /// changed band entries. Writers stamp rows when they stage them, so a row
+    /// committed just after the previous prune's snapshot can carry an earlier time.
+    /// </summary>
+    public static readonly TimeSpan DefaultPruneChangeSafetyMargin = TimeSpan.FromMinutes(15);
+
     /// <param name="captureRetentionFloor">When true, records each scope's
     /// <see cref="BandRetentionFloorSchema">retention floor</see> from the same
     /// ranking, and reports how many shadow-recorded flush rows survived.</param>
@@ -682,9 +716,13 @@ public sealed class BandLeaderboardPersistence
         int maxValidEntries = DefaultMaxValidBandEntries,
         bool captureRetentionFloor = false,
         int retentionFloorMarginRows = DefaultRetentionFloorMarginRows,
-        IReadOnlyList<int>? retentionFloorMarginCandidates = null)
+        IReadOnlyList<int>? retentionFloorMarginCandidates = null,
+        BandPruneScopeOptions? scopeOptions = null)
     {
         if (maxValidEntries <= 0) return BandPruneResult.Empty;
+        var changedScopesOnly = scopeOptions is { ChangedScopesOnly: true };
+        if (changedScopesOnly)
+            BandRetentionFloorSchema.Ensure(_dataSource);
         var floorMargin = Math.Max(0, retentionFloorMarginRows);
         var marginCandidates = (retentionFloorMarginCandidates ?? DefaultRetentionFloorMarginCandidates)
             .Where(candidate => candidate >= 0 && candidate < floorMargin)
@@ -702,6 +740,7 @@ public sealed class BandLeaderboardPersistence
         int statsDeleted = 0;
         int lookupsDeleted = 0;
 
+        var scopeSelection = BandPruneScopeSelection.Full("changed-scope prune off");
         using var conn = _dataSource.OpenConnection();
 
         using (var tx = conn.BeginTransaction())
@@ -736,6 +775,10 @@ public sealed class BandLeaderboardPersistence
                     """;
                 cmd.ExecuteNonQuery();
             }
+
+            scopeSelection = changedScopesOnly
+                ? SelectPruneScopes(conn, tx, scopeOptions!, maxValidEntries)
+                : BandPruneScopeSelection.Full("changed-scope prune off");
 
             if (captureRetentionFloor)
             {
@@ -777,7 +820,8 @@ public sealed class BandLeaderboardPersistence
             {
                 deleteCmd.Transaction = tx;
                 deleteCmd.CommandTimeout = 0;
-                deleteCmd.CommandText = (captureRetentionFloor ? PruneWithFloorCaptureRankedSql : PruneRankedSql) + """
+                deleteCmd.CommandText = (captureRetentionFloor ? PruneWithFloorCaptureRankedSql : PruneRankedSql)
+                    .Replace("__PRUNE_SCOPE_FILTER__", scopeSelection.Partial ? PruneScopeFilterSql : string.Empty, StringComparison.Ordinal) + """
                     boundaries AS (
                         SELECT song_id, band_type,
                                COALESCE(MIN(rn) FILTER (WHERE is_over_threshold = false), 2147483647) AS first_valid_rn
@@ -882,9 +926,21 @@ public sealed class BandLeaderboardPersistence
             }
 
             if (captureRetentionFloor)
-                floorSummary = ReplaceRetentionFloors(conn, tx, maxValidEntries, registeredIds, floorMargin);
+                floorSummary = ReplaceRetentionFloors(conn, tx, maxValidEntries, registeredIds, floorMargin, scopeSelection.Partial);
+
+            if (changedScopesOnly)
+                RecordPruneState(conn, tx, maxValidEntries, scopeSelection.Partial);
 
             tx.Commit();
+        }
+
+        if (changedScopesOnly)
+        {
+            _log.LogInformation(
+                "Band prune scope: {Mode} ({Reason}); {Scopes} changed scope(s).",
+                scopeSelection.Partial ? "changed scopes only" : "all scopes",
+                scopeSelection.Reason,
+                scopeSelection.Partial ? scopeSelection.ChangedScopes.ToString("N0") : "all");
         }
 
         if (floorSummary is not null)
@@ -949,6 +1005,7 @@ public sealed class BandLeaderboardPersistence
                        ORDER BY score DESC, COALESCE(end_time, '') ASC
                    ) AS rn
             FROM band_entries
+            __PRUNE_SCOPE_FILTER__
         ),
 
         """;
@@ -962,9 +1019,109 @@ public sealed class BandLeaderboardPersistence
                        ORDER BY score DESC, COALESCE(end_time, '') ASC
                    ) AS rn
             FROM band_entries
+            __PRUNE_SCOPE_FILTER__
         ),
 
         """;
+
+    private const string PruneScopeFilterSql = """
+        WHERE EXISTS (
+            SELECT 1 FROM _band_prune_scopes scope
+            WHERE scope.song_id = band_entries.song_id AND scope.band_type = band_entries.band_type)
+        """;
+
+    /// <summary>
+    /// Chooses between a full prune and a prune of only the scopes with a band
+    /// entry inserted or updated since shortly before the previous prune. A scope
+    /// without such a change is exactly as the previous prune left it, so it has
+    /// nothing to delete and its recorded floor is still valid. A full prune runs
+    /// when no previous prune is recorded, when the window size changed, or when
+    /// the last full prune is older than the configured interval (which also
+    /// catches deletions that need no row change, such as an unregistered team).
+    /// </summary>
+    private static BandPruneScopeSelection SelectPruneScopes(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandPruneScopeOptions options,
+        int maxValidEntries)
+    {
+        DateTime? lastPruneAt = null;
+        DateTime? lastFullPruneAt = null;
+        int? stateMaxValid = null;
+        DateTime now;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT now(), s.last_prune_at, s.last_full_prune_at, s.max_valid_entries
+                FROM (SELECT 1) one
+                LEFT JOIN band_prune_state s ON s.id
+                """;
+            using var reader = cmd.ExecuteReader();
+            reader.Read();
+            now = reader.GetFieldValue<DateTime>(0);
+            if (!reader.IsDBNull(1))
+            {
+                lastPruneAt = reader.GetFieldValue<DateTime>(1);
+                lastFullPruneAt = reader.GetFieldValue<DateTime>(2);
+                stateMaxValid = reader.GetInt32(3);
+            }
+        }
+
+        if (lastPruneAt is null)
+            return BandPruneScopeSelection.Full("no previous prune recorded");
+        if (stateMaxValid != maxValidEntries)
+            return BandPruneScopeSelection.Full("window size changed");
+        if (now - lastFullPruneAt!.Value >= options.FullPruneInterval)
+            return BandPruneScopeSelection.Full("full prune interval elapsed");
+
+        var changedSince = lastPruneAt.Value - options.ChangeSafetyMargin;
+        int changedScopes;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                CREATE TEMP TABLE _band_prune_scopes (
+                    song_id TEXT NOT NULL,
+                    band_type TEXT NOT NULL,
+                    PRIMARY KEY (song_id, band_type)
+                ) ON COMMIT DROP;
+                INSERT INTO _band_prune_scopes (song_id, band_type)
+                SELECT DISTINCT song_id, band_type
+                FROM band_entries
+                WHERE last_updated_at > @changedSince;
+                """;
+            cmd.Parameters.AddWithValue("changedSince", changedSince);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "ANALYZE _band_prune_scopes; SELECT COUNT(*)::INT FROM _band_prune_scopes";
+            changedScopes = Convert.ToInt32(cmd.ExecuteScalar());
+        }
+
+        return new BandPruneScopeSelection(true, changedScopes, $"changed since {changedSince:O}");
+    }
+
+    private static void RecordPruneState(NpgsqlConnection conn, NpgsqlTransaction tx, int maxValidEntries, bool partial)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO band_prune_state (id, last_prune_at, last_full_prune_at, max_valid_entries)
+            VALUES (TRUE, now(), now(), @maxValid)
+            ON CONFLICT (id) DO UPDATE SET
+                last_prune_at = EXCLUDED.last_prune_at,
+                last_full_prune_at = CASE WHEN @partial THEN band_prune_state.last_full_prune_at ELSE EXCLUDED.last_full_prune_at END,
+                max_valid_entries = EXCLUDED.max_valid_entries
+            """;
+        cmd.Parameters.AddWithValue("maxValid", maxValidEntries);
+        cmd.Parameters.AddWithValue("partial", partial);
+        cmd.ExecuteNonQuery();
+    }
 
     // Captured from the same ranking as the delete: the first valid row, the
     // window's last row (rank first_valid_rn + maxValid - 1), and the floor
@@ -1020,7 +1177,8 @@ public sealed class BandLeaderboardPersistence
         NpgsqlTransaction tx,
         int maxValidEntries,
         IReadOnlySet<string> registeredIds,
-        int floorMargin)
+        int floorMargin,
+        bool partial = false)
     {
         // Margin check, after this prune's delete. A row the band flush inserted
         // since the previous prune that is not registered and ranks below the key
@@ -1077,13 +1235,18 @@ public sealed class BandLeaderboardPersistence
             cmd.CommandText = """
                 WITH shadow AS (
                     SELECT s.*, w.window_end_rank, w.scope_rows, w.window_score, w.window_end_time,
+                           __PRUNED_SCOPE__ AS pruned_scope,
                            ROW_NUMBER() OVER (
                                PARTITION BY s.song_id, s.band_type
                                ORDER BY s.score DESC, s.end_time_key ASC) AS shadow_rn
                     FROM band_retention_floor_shadow s
                     LEFT JOIN _band_prune_floor_rows w
                       ON w.song_id = s.song_id AND w.band_type = s.band_type
+                    __PRUNED_SCOPE_JOIN__
                 )
+                -- A scope this prune skipped is unchanged since its floor was
+                -- recorded: its window still ends at or above the floor, so a row
+                -- below the floor is kept only if it is stored or registered.
                 SELECT count(*),
                        count(*) FILTER (WHERE
                            EXISTS (
@@ -1091,12 +1254,20 @@ public sealed class BandLeaderboardPersistence
                                WHERE e.song_id = s.song_id AND e.band_type = s.band_type
                                  AND e.team_key = s.team_key AND e.instrument_combo = s.instrument_combo)
                            OR string_to_array(s.team_key, ':') && @registeredIds
-                           OR s.window_end_rank IS NULL
-                           OR (s.window_score IS NULL AND s.shadow_rn <= s.window_end_rank - s.scope_rows)
-                           OR s.score > s.window_score
-                           OR (s.score = s.window_score AND s.end_time_key <= s.window_end_time))
+                           OR (s.pruned_scope AND (
+                               s.window_end_rank IS NULL
+                               OR (s.window_score IS NULL AND s.shadow_rn <= s.window_end_rank - s.scope_rows)
+                               OR s.score > s.window_score
+                               OR (s.score = s.window_score AND s.end_time_key <= s.window_end_time))))
                 FROM shadow s
-                """;
+                """
+                .Replace("__PRUNED_SCOPE__", partial ? "(scope.song_id IS NOT NULL)" : "TRUE", StringComparison.Ordinal)
+                .Replace(
+                    "__PRUNED_SCOPE_JOIN__",
+                    partial
+                        ? "LEFT JOIN _band_prune_scopes scope ON scope.song_id = s.song_id AND scope.band_type = s.band_type"
+                        : string.Empty,
+                    StringComparison.Ordinal);
             cmd.Parameters.Add("registeredIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = registeredIds.ToArray();
             using var reader = cmd.ExecuteReader();
             reader.Read();
@@ -1108,11 +1279,19 @@ public sealed class BandLeaderboardPersistence
         using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
-            cmd.CommandText = """
-                DELETE FROM band_retention_floor_shadow;
-                DELETE FROM band_retention_floor;
-                DELETE FROM band_retention_floor_margin_keys;
-                """;
+            cmd.CommandText = partial
+                ? """
+                    DELETE FROM band_retention_floor_shadow;
+                    DELETE FROM band_retention_floor f USING _band_prune_scopes scope
+                    WHERE f.song_id = scope.song_id AND f.band_type = scope.band_type;
+                    DELETE FROM band_retention_floor_margin_keys k USING _band_prune_scopes scope
+                    WHERE k.song_id = scope.song_id AND k.band_type = scope.band_type;
+                    """
+                : """
+                    DELETE FROM band_retention_floor_shadow;
+                    DELETE FROM band_retention_floor;
+                    DELETE FROM band_retention_floor_margin_keys;
+                    """;
             cmd.ExecuteNonQuery();
         }
 
@@ -1139,6 +1318,7 @@ public sealed class BandLeaderboardPersistence
                 INSERT INTO band_retention_floor_margin_keys (song_id, band_type, margin_rows, score, end_time_key)
                 SELECT k.song_id, k.band_type, k.margin_rows, k.score, k.end_time_key
                 FROM _band_prune_margin_keys k
+                JOIN _band_prune_floor_rows w ON w.song_id = k.song_id AND w.band_type = k.band_type
                 JOIN band_retention_floor f ON f.song_id = k.song_id AND f.band_type = k.band_type
                 """;
             cmd.ExecuteNonQuery();
@@ -1765,6 +1945,21 @@ public sealed record BandRetentionFloorPruneSummary(
     IReadOnlyDictionary<int, long>? MarginCheckByMargin = null)
 {
     public IReadOnlyDictionary<int, long> MarginCheck { get; } = MarginCheckByMargin ?? new Dictionary<int, long>();
+}
+
+/// <summary>
+/// Changed-scope prune settings: prune only scopes with a band entry inserted or
+/// updated since <see cref="ChangeSafetyMargin"/> before the previous prune, and
+/// prune everything at least every <see cref="FullPruneInterval"/>.
+/// </summary>
+public sealed record BandPruneScopeOptions(
+    bool ChangedScopesOnly,
+    TimeSpan FullPruneInterval,
+    TimeSpan ChangeSafetyMargin);
+
+internal sealed record BandPruneScopeSelection(bool Partial, int ChangedScopes, string Reason)
+{
+    public static BandPruneScopeSelection Full(string reason) => new(false, 0, reason);
 }
 
 public sealed record BandPruneResult(
