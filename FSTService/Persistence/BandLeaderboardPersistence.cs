@@ -389,7 +389,8 @@ public sealed class BandLeaderboardPersistence
     public (int Bands, int Members, int Lookups) UpsertBandEntriesDirect(
         string songId, string bandType, IReadOnlyList<BandLeaderboardEntry> entries,
         NpgsqlConnection conn, NpgsqlTransaction tx,
-        bool rebuildTeamMembership = true)
+        bool rebuildTeamMembership = true,
+        BandRetentionFloorFilter? retentionFloor = null)
     {
         if (entries.Count == 0)
             return (0, 0, 0);
@@ -459,6 +460,32 @@ public sealed class BandLeaderboardPersistence
                 writer.Write(now, NpgsqlDbType.TimestampTz);
             }
             writer.Complete();
+        }
+
+        if (retentionFloor is { IsActive: true }
+            && retentionFloor.Apply(conn, tx) > 0
+            && retentionFloor.Mode == BandRetentionFloorMode.Enforce)
+        {
+            // Skipped rows were not stored, so their member stats and lookups
+            // must not be written either.
+            var kept = new HashSet<(string TeamKey, string InstrumentCombo)>();
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "SELECT DISTINCT team_key, instrument_combo FROM _be_staging";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    kept.Add((reader.GetString(0), reader.GetString(1)));
+            }
+
+            entries = entries
+                .Where(entry => kept.Contains((entry.TeamKey, entry.InstrumentCombo)))
+                .ToArray();
+            impactedTeamKeys = entries
+                .Select(static entry => entry.TeamKey)
+                .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         int merged;

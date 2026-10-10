@@ -911,10 +911,19 @@ Snapshot activation gives nearly every solo scope a new source, so each scrape
 refreshes nearly all of them. Scrape `1509` refreshed 1,288 scopes before
 Rivals (133 seconds) and all 6,240 in `Cleanup.SoloCurrentProjection`
 (42,527,106 rows, 378 seconds). Each refresh compares the desired rows with the
-stored ones and records the result in `solo_current_projection_scope`. A full
-scope typically has about 10,000 rows, of which 3–7 differ. The refresh
-nevertheless deletes and re-inserts every row under a new generation,
-maintaining four indexes per row.
+stored ones and records the result in `solo_current_projection_scope`. In a
+scope whose source did not change, a full scope of about 10,000 rows typically
+has 3–7 differing rows. The refresh nevertheless deleted and re-inserted every
+row under a new generation, maintaining four indexes per row.
+
+Scopes that received a new snapshot are different. Every snapshot row gets the
+snapshot's write time as `first_seen_at` and `last_updated_at`. More
+importantly, any new or improved entry shifts the rank of every row below it.
+Between snapshots `1519` and `1520`, two sampled Solo Bass scopes had new
+computed ranks for 62% and 86% of their rows; score, `api_rank` and percentile
+were unchanged. Carrying timestamps forward from the previous snapshot would
+therefore only modestly shrink the refresh of these scopes, and it would cost
+an extra lookup per staged row in the leaderboard flush, so it was not done.
 
 `Scraper:SoloCurrentProjectionApplyDiff` (default `false`) writes only the
 differences when the scope is ready and every stored row carries the scope's
@@ -1041,6 +1050,26 @@ candidate that stays at zero across scrapes is a safe smaller
 - The current projection refresh did not shrink. Its scope count varies by
   scrape (1,679 to 6,990 across scrapes `1488` to `1501`) and was 3,616 in
   `1501`.
+
+The margin checks stayed at zero, so the margin went to 10 at the scrape `1510`
+boundary and to 0 at the `1511` boundary. From scrape `1513`, prune deleted about
+40,000 entries a scrape, against about 220,000 before. Band prune took about
+3.5 minutes instead of 7.3, and the search refresh about 0.5 instead of 2.6.
+
+Those remaining 40,000 rows came from band extraction, not the flush. Each scrape
+extraction re-derives every band entry from the 86,111 solo rows with band
+context. It re-inserts about 39,000 entries, 107,000 member stats and 107,000
+member lookups that the previous prune deleted (scrape `1520`: 39,410 extracted;
+then prune deleted 40,047, 108,752 and 108,742).
+`Scraper:BandRetentionFloorApplyToExtraction` (default `false`) passes the
+scrape's floor filter to extraction. Extraction then removes the rows that rank
+below their scope's floor and are not stored before its upsert, and drops their
+member stats and lookups. It records them in the shadow table like the flush,
+and only with the mode and filter state the flush used. A pass without a floor,
+a pass whose band flush was skipped (for example after a band fetch timeout),
+or a resumed pass extracts everything. An isolated PostgreSQL test keeps the
+stored entries, member stats and lookups identical to writing everything, across
+several extract-and-prune rounds.
 
 ## Durable phase progress
 

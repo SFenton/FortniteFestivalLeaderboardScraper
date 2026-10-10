@@ -10,6 +10,12 @@ namespace FSTService.Scraping;
 public sealed class ScrapePassContext
 {
     public required long ScrapeId { get; init; }
+
+    /// <summary>
+    /// The band retention floor the leaderboard pass flushed with, or null when
+    /// the pass did not use one (including resumed passes).
+    /// </summary>
+    public BandRetentionFloorFilter? BandRetentionFloor { get; init; }
     public required string AccessToken { get; init; }
     public required string CallerAccountId { get; init; }
     public required HashSet<string> RegisteredIds { get; init; }
