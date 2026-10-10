@@ -1062,6 +1062,36 @@ or a resumed pass extracts everything. An isolated PostgreSQL test keeps the
 stored entries, member stats and lookups identical to writing everything, across
 several extract-and-prune rounds.
 
+Band prune still ranks every band entry, about 20 million rows, to find the
+few scopes with rows to delete: 2.6 executor-minutes and 28 GB of reads in
+scrape `1502`. In scrape `1520` only about 470 of 2,196 scopes had a band entry
+inserted or updated after the flush. `Scraper:BandPruneChangedScopesOnly`
+(default `false`) prunes only those scopes:
+
+- The previous prune's start time is recorded in `band_prune_state`.
+- The next prune ranks only scopes with a band entry whose `last_updated_at`
+  is later than 15 minutes before that time. Writers stamp rows when they stage
+  them, so a row committed just after the previous prune can carry an earlier
+  time; the 15 minutes cover that.
+- Every write that can change a scope's window updates `last_updated_at`:
+  inserts, score increases and over-threshold changes. The flush already did
+  this for over-threshold changes; band extraction and the registered-band
+  lookups now do as well.
+- An unchanged scope is exactly as the previous prune left it. It has nothing
+  to delete, and its recorded floor and margin keys stay valid, so only the
+  pruned scopes' floors and margin keys are replaced.
+- The shadow-row check counts a skipped row of an unchanged scope as kept only
+  when it is stored or registered: its window still ends at or above the floor.
+- A full prune runs when no prune is recorded, when the window size changes,
+  and at least every `Scraper:BandPruneFullIntervalHours` (default 24). This
+  also catches deletions that need no row change, such as a team whose member
+  unregistered.
+
+Isolated PostgreSQL tests keep the stored entries, member stats, lookups and
+floors identical to a full prune across several rounds of changes, including an
+over-threshold flip. They also cover the full-prune triggers and the
+shadow-row check.
+
 ## Durable phase progress
 
 Plan `fst.scrape-plan.v2` assigns 28 test-locked IDs to the existing

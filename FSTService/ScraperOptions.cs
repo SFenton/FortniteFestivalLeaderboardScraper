@@ -1101,6 +1101,21 @@ public sealed class ScraperOptions
     public bool BandRetentionFloorApplyToExtraction { get; set; }
 
     /// <summary>
+    /// When true, band prune ranks and prunes only the scopes with a band entry
+    /// inserted or updated since shortly before the previous prune, and prunes
+    /// every scope at least every <see cref="BandPruneFullIntervalHours"/> hours.
+    /// Default false. Set via <c>Scraper__BandPruneChangedScopesOnly</c>.
+    /// </summary>
+    public bool BandPruneChangedScopesOnly { get; set; }
+
+    /// <summary>
+    /// Maximum hours between full band prunes when
+    /// <see cref="BandPruneChangedScopesOnly"/> is on. Default 24.
+    /// Set via <c>Scraper__BandPruneFullIntervalHours</c>.
+    /// </summary>
+    public int BandPruneFullIntervalHours { get; set; } = 24;
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>

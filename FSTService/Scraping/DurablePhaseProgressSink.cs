@@ -185,6 +185,8 @@ public sealed class DurablePhaseProgressSink
         "Scraper:BandRetentionFloorMode",
         "Scraper:BandRetentionFloorMarginRows",
         "Scraper:BandRetentionFloorApplyToExtraction",
+        "Scraper:BandPruneChangedScopesOnly",
+        "Scraper:BandPruneFullIntervalHours",
         "BandRankHistory:Mode",
         "BandRankHistory:WriteMode",
         "BandTeamRankings:WriteMode",
