@@ -47,6 +47,7 @@ public sealed class SoloCurrentProjectionBuilder
     private readonly ILogger<SoloCurrentProjectionBuilder> _log;
     private readonly bool _useSnapshotOverlayWorkerReaders;
     private readonly bool _applyDiff;
+    private int _schemaEnsured;
 
     public SoloCurrentProjectionBuilder(
         NpgsqlDataSource dataSource,
@@ -66,11 +67,18 @@ public sealed class SoloCurrentProjectionBuilder
 
     public async Task EnsureSchemaAsync(CancellationToken ct = default)
     {
+        // The DDL takes a ShareLock on every projection partition even when
+        // nothing is missing, which cancels autovacuum on them, so the
+        // (singleton) builder runs it once.
+        if (Volatile.Read(ref _schemaEnsured) == 1)
+            return;
+
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = 0;
         cmd.CommandText = ProjectionSchemaSql;
         await cmd.ExecuteNonQueryAsync(ct);
+        Volatile.Write(ref _schemaEnsured, 1);
     }
 
     public SoloCurrentProjectionStats Inspect(int recentScopeLimit = 20)
