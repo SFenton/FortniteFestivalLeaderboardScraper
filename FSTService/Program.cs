@@ -965,12 +965,7 @@ builder.Services.AddRateLimiter(opts =>
         if (isTesting)
             return RateLimitPartition.GetNoLimiter("test");
         var feedback = context.RequestServices.GetRequiredService<IOptions<FeedbackOptions>>().Value;
-        return RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = Math.Max(1, feedback.SubmissionsPerWindow),
-            Window = TimeSpan.FromMinutes(Math.Max(1, feedback.SubmissionWindowMinutes)),
-            QueueLimit = 0,
-        });
+        return RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => ApiEndpoints.CreateFeedbackLimiterOptions(feedback));
     });
 
     opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
