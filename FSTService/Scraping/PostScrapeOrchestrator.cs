@@ -3143,7 +3143,13 @@ public sealed class PostScrapeOrchestrator
             var result = _bandPersistence.PruneBandEntriesDetailed(
                 ctx.RegisteredIds,
                 captureRetentionFloor: _options.Value.BandRetentionFloorMode != BandRetentionFloorMode.Off,
-                retentionFloorMarginRows: _options.Value.BandRetentionFloorMarginRows);
+                retentionFloorMarginRows: _options.Value.BandRetentionFloorMarginRows,
+                scopeOptions: _options.Value.BandPruneChangedScopesOnly
+                    ? new BandPruneScopeOptions(
+                        ChangedScopesOnly: true,
+                        FullPruneInterval: TimeSpan.FromHours(Math.Max(1, _options.Value.BandPruneFullIntervalHours)),
+                        ChangeSafetyMargin: BandLeaderboardPersistence.DefaultPruneChangeSafetyMargin)
+                    : null);
             if (result.DeletedEntries > 0)
                 _log.LogInformation("Band pruning complete: {Deleted:N0} entries removed.", result.DeletedEntries);
             return result;

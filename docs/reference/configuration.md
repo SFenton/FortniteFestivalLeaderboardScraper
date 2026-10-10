@@ -294,6 +294,8 @@ invalid/non-positive values prevent startup.
 | `Scraper:BandRetentionFloorMode` | `Off` | Band retention floor for the post-fetch band flush. `Report` records staged new rows that rank below the floor band prune last recorded for their scope, and the next prune counts how many of them it would keep; `Enforce` also skips those rows; `Off` does neither. See [worker: band retention floor](../components/worker.md#band-retention-floor) |
 | `Scraper:OverThresholdMultiplier` | `1.05` | Solo deep-scrape trigger (`CHOptMax × multiplier`) and the band over-threshold flag: a band entry is over threshold when any member's score exceeds that member's instrument CHOpt max times this multiplier. The band page fetch and band extraction both apply it |
 | `Scraper:BandRetentionFloorApplyToExtraction` | `false` | Apply the scrape's band retention floor (mode and filter state) to post-scrape band extraction, so extraction does not insert rows prune would delete |
+| `Scraper:BandPruneChangedScopesOnly` | `false` | Band prune ranks and prunes only scopes with a band entry inserted or updated since 15 minutes before the previous prune; see [worker: band retention floor](../components/worker.md#band-retention-floor) |
+| `Scraper:BandPruneFullIntervalHours` | `24` | With `BandPruneChangedScopesOnly`, the longest time between full band prunes |
 | `Scraper:BandRetentionFloorMarginRows` | `100` | Rows between band prune's last kept window row and the recorded retention floor; absorbs over-threshold flips at the top of a leaderboard between the flush and prune |
 
 The Compose form is
