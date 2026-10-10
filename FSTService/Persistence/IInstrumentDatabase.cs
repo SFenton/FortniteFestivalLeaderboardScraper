@@ -120,6 +120,12 @@ public interface IInstrumentDatabase : IDisposable
     (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore");
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);
     int GetRankedAccountCount();
+
+    /// <summary>
+    /// The cached ranked-account count, or null when none is cached. Unlike
+    /// <see cref="GetRankedAccountCount"/>, it never counts or writes.
+    /// </summary>
+    int? GetCachedRankedAccountCount() => null;
     int GetTotalChartedSongs();
     List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();
     List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull();

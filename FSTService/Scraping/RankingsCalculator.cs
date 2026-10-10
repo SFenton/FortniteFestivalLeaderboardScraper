@@ -1419,7 +1419,7 @@ public sealed class RankingsCalculator
     {
         try
         {
-            return _persistence.GetOrCreateInstrumentDb(instrument).GetRankedAccountCount();
+            return _persistence.GetOrCreateInstrumentDb(instrument).GetCachedRankedAccountCount() ?? 0;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
