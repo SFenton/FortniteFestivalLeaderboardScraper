@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
+using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
@@ -25,6 +26,8 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
     private readonly SpoolWriter<BandLeaderboardEntry> _spool;
+    private readonly IReadOnlyDictionary<string, SongMaxScores>? _maxScoresBySong;
+    private readonly double _overThresholdMultiplier;
     private readonly ConcurrentDictionary<(string SongId, string BandType), ScopeState> _scopeStates = new();
 
     private sealed class ScopeState
@@ -43,10 +46,14 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
         SpoolWriter<BandLeaderboardEntry> spool,
         ScrapeProgressTracker progress,
         ILogger log,
-        ScrapeAccessTokenProvider? accessTokenProvider = null)
+        ScrapeAccessTokenProvider? accessTokenProvider = null,
+        IReadOnlyDictionary<string, SongMaxScores>? maxScoresBySong = null,
+        double overThresholdMultiplier = 1.05)
         : base(executor, pool, progress, log, accessTokenProvider)
     {
         _spool = spool;
+        _maxScoresBySong = maxScoresBySong;
+        _overThresholdMultiplier = overThresholdMultiplier;
     }
 
     protected override string BuildUrl(string songId, string type, int page, string accountId) =>
@@ -66,10 +73,23 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
 
     protected override void ProcessEntries(string songId, string type, IParsedPage<BandLeaderboardEntry> page)
     {
-        foreach (var entry in page.Entries)
-            BandScrapePhase.ApplyChOptValidation(entry, null);
-
+        ApplyOverThresholdFlags(songId, page.Entries);
         _spool.Enqueue(songId, type, (IReadOnlyList<BandLeaderboardEntry>)page.Entries);
+    }
+
+    /// <summary>
+    /// Flags over-threshold entries exactly as band extraction does, so the
+    /// flush does not clear flags that extraction sets again later. Runs before
+    /// page fingerprinting, which hashes the flag. Idempotent: it only sets flags.
+    /// </summary>
+    private void ApplyOverThresholdFlags(string songId, IReadOnlyList<BandLeaderboardEntry> entries)
+    {
+        var maxScores = _maxScoresBySong is not null
+            && _maxScoresBySong.TryGetValue(songId, out var songMaxScores)
+                ? songMaxScores
+                : null;
+        foreach (var entry in entries)
+            BandScrapePhase.ApplyChOptValidation(entry, maxScores, _overThresholdMultiplier);
     }
 
     /// <summary>
@@ -133,6 +153,7 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
             }
 
             Interlocked.Exchange(ref scopeState.ReportedTotalPages, parsed.TotalPages);
+            ApplyOverThresholdFlags(item.SongId, parsed.Entries);
             scopeState.PageFingerprints[0] = ComputePageFingerprint(parsed.Entries);
             Interlocked.Add(ref scopeState.EntryCount, parsed.Entries.Count);
             if (parsed.Entries.Count > 0)
@@ -198,6 +219,7 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
 
             if (parsed is not null)
             {
+                ApplyOverThresholdFlags(item.SongId, parsed.Entries);
                 scopeState.PageFingerprints[item.Page] = ComputePageFingerprint(parsed.Entries);
                 Interlocked.Add(ref scopeState.EntryCount, parsed.Entries.Count);
                 if (parsed.Entries.Count > 0)

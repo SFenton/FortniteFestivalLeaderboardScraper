@@ -252,7 +252,7 @@ Aggregate player scopes intentionally use different formulas:
 - Protected routes authenticate through `X-API-Key`.
 - Public/auth/protected/global fixed-window policies currently use 100 requests
   per second per client outside tests. `POST /api/feedback` uses the separate
-  `feedback` policy (default 5 submissions per 10 minutes per client IP).
+  `feedback` policy (default 60 submissions per 60 minutes per client IP).
 - Publication-bound responses participate in read gates, generation context,
   cache behavior, and route-surface readiness.
 - With `UsePublishedScopeSources=true`, startup, `/readyz`, L1/L2 cache hits,

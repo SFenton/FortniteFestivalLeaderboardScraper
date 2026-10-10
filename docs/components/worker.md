@@ -792,6 +792,26 @@ and isolated PostgreSQL tests keep sequential and parallel projection and
 state hashes identical for both member-stat query shapes. Promotion needs a
 one-variable full-scrape A/B.
 
+A refresh selects about three to four scopes per song and band type: the
+`overall` scope plus the changed combo scopes. Each scope rereads and
+renormalizes all of the song's band entries and member stats, so a small combo
+scope still pays most of the song-wide read. Scrape `1507` refreshed 1,564
+scopes across 463 song/band-type pairs.
+`Scraper:BandCurrentProjectionBatchScopesBySourcePair` (default `false`;
+requires `MaxParallelScopes` above `0`) runs one transaction per pair instead.
+The transaction materializes the song's non-over-threshold entries, combo ids,
+and member-stat arrays once in an `ON COMMIT DROP` temporary table, then runs
+the unchanged choose/rank/insert/scope-state statement for each scope against
+it. Pairs run in parallel, band types alternate, larger pairs start first, and
+a pair runs its `overall` scope first. The rebuild time is taken before the
+source read, as in the per-scope path, so a concurrent source change remains
+newer than `last_rebuilt_at`. A failure rolls back the whole pair and marks
+each of its scopes failed. The refresh log reports `batchedBySourcePair`, the
+pair transaction count, and the source rows read as member-stat passes.
+Isolated PostgreSQL tests keep projection and state hashes identical to the
+per-scope path for fresh, primed-and-changed, and unfiltered refreshes,
+including combo choice, ties, over-threshold rows, and empty scopes.
+
 After the rebuilds, the default publish runs one transaction that flips every
 ready scope's `published_generation` and deletes the older generations, then
 a candidate cleanup scans the whole projection for rows that are neither
@@ -849,6 +869,28 @@ generation. On 2026-10-02 production had 3,409 such combo scopes (last
 rebuilt between 2026-06-01 and 2026-09-20; 2,652 with a different row count)
 serving stale published rows, for example 71 published versus 30 current
 rows. The stale sweep converges them within its cap.
+
+The sweep still reads the band entries twice: once to load every source scope
+and once in the filter. In scrape `1509` the two passes took 3.2 minutes for
+110,042 candidates and 49,176 impacted scopes, about as long as the pair
+rebuild and publish that followed. `Scraper:BandCurrentProjectionSinglePassStaleSweep`
+(default `false`) makes it one pass:
+
+1. One scan records each source scope's projected row count (distinct teams)
+   and latest source update in a temporary table.
+2. The candidate keys come from that table plus the projection scope keys and
+   are normalized and de-duplicated as before.
+3. The unchanged-scope selection joins the table instead of scanning the
+   entries again.
+
+The selected impacted and stale scopes and the candidate count match the
+two-pass sweep.
+
+Both the sweep's source-scope load and the filter look combo ids up in a map
+built once per statement. The map covers every combo of one to four instrument
+ids from 0 to 10, plus the empty combo. That replaces about 20 million
+evaluations of the combo-id expression. Any other value falls back to the
+expression, and a PostgreSQL test checks that the map and the expression agree.
 
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
@@ -939,11 +981,21 @@ scrape because the next floor is recorded below them.
 Between a prune and the next flush, rows only move up: scores are maxima and
 only prune deletes band entries. The window can still move down when entries
 at the top become over-threshold, each flip by one row. The band page fetch
-stages every row with `is_over_threshold = false` (it has no max scores), and
-band extraction applies CHOpt validation later in the same scrape, before
-prune. That is why the floor sits a margin below the window: production
-re-fetches the rows just under the window every scrape, and the margin keeps
-them, so up to `margin` flips per scope cannot reach a skipped row.
+flags over-threshold rows with the scrape's CHOpt max scores and
+`Scraper:OverThresholdMultiplier`, the same check band extraction applies later
+in the same scrape, before prune. The registered-band lookups and the
+max-score recompute use the same max scores and multiplier. Until then the
+fetch and the registered lookups staged every row as valid. Band extraction
+only covers solo rows with band context (about 86,000 per scrape), so most
+over-threshold band entries were never flagged. In scrape `1510`, the first
+fetch with the check flagged about 3,556 more entries, across about 70 songs per
+band type, and left the existing flags unchanged. Those entries no longer count
+toward valid band rankings or current projections. The flush cleared every stored over-threshold flag (about 735 rows per
+scrape, each with a new `last_updated_at`), and extraction set them again. New
+over-threshold entries above the window still move it down. That is why the
+floor sits a margin below the window: production re-fetches the rows just
+under the window every scrape, and the margin keeps them, so up to `margin`
+flips per scope cannot reach a skipped row.
 
 The flush also drops the floor of every scope whose recorded first valid entry
 is staged as over-threshold. An over-threshold recompute after a max-score
@@ -969,7 +1021,23 @@ Production rollout:
 - Prune recorded 1,682 scope floors at ranks 10,100 to 10,103.
 - `Enforce` has been on since the scrape `1500` boundary (2026-10-08 23:36Z).
 - About 218,000 rows a scrape still churn. Most of them are the margin rows
-  between the window and the floor.
+  between the window and the floor: prune deletes them, and the next fetch
+  re-stages and re-inserts them.
+
+To size the margin from evidence, each prune also records the keys at smaller
+candidate margins (0, 5, 10, 25 and 50 rows below the window's last row, when
+below the configured margin) in `band_retention_floor_margin_keys`. The next
+prune counts, for each candidate:
+
+- rows the band flush inserted since the previous prune (`source = 'scrape'`,
+  not registered);
+- that rank strictly below that candidate's key;
+- and that this prune kept.
+
+The floor would have skipped those rows with that margin. The prune logs
+`Band retention floor margin check (current margin N): ... 0=a, 5=b, ...`. A
+candidate that stays at zero across scrapes is a safe smaller
+`Scraper:BandRetentionFloorMarginRows`.
 - The current projection refresh did not shrink. Its scope count varies by
   scrape (1,679 to 6,990 across scrapes `1488` to `1501`) and was 3,616 in
   `1501`.

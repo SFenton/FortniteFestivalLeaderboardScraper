@@ -236,7 +236,8 @@ authenticated, protected, and global fixed-window limiters currently share the
 same 100-request, one-second, per-client policy outside the test environment.
 `POST /api/feedback` instead uses the `feedback` policy, a per-client-IP fixed
 window from `Feedback:SubmissionsPerWindow`/`SubmissionWindowMinutes`
-(default 5 per 10 minutes).
+(default 60 per 60 minutes, so heavy in-app reporting is not refused while
+scripted floods that would open GitHub issues still are).
 Do not copy older minute-based limits from deleted historical guidance.
 
 ## Caching and publication

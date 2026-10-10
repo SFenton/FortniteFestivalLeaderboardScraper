@@ -70,7 +70,7 @@ Responses:
 | `400` | `{ "error", "code" }`; `code` is `invalid_form`, `invalid_kind`, `invalid_platform`, `title_required`, `description_required`, `field_too_long`, `too_many_attachments`, or `unsupported_media` |
 | `404` | `feedback_disabled` |
 | `413` | `{ "error", "code": "payload_too_large", "maxBytes" }` (whole request over `MaxRequestBytes`, 90 MiB) |
-| `429` | rate limited: `SubmissionsPerWindow` (5) per `SubmissionWindowMinutes` (10) per client IP |
+| `429` | rate limited: `SubmissionsPerWindow` (60) per `SubmissionWindowMinutes` (60) per client IP |
 | `503` | `feedback_busy` with `Retry-After: 60` when more than `MaxQueuedSubmissions` (10) are pending |
 
 The body is streamed to a per-submission scratch directory; it is never
@@ -162,7 +162,7 @@ Section `Feedback` (see `FSTService/appsettings.json`):
 | `MaxRequestBytes` | 94371840 | whole-request cap |
 | `MaxAttachments` | 4 | files per submission |
 | `GitHubAttachmentMaxBytes` | 10485760 | per-file target after conversion |
-| `SubmissionsPerWindow` / `SubmissionWindowMinutes` | 5 / 10 | per-IP submit rate limit |
+| `SubmissionsPerWindow` / `SubmissionWindowMinutes` | 60 / 60 | per-IP submit rate limit; high enough for filing many reports in a row, still bounds scripted floods on this unauthenticated endpoint |
 | `MaxQueuedSubmissions` | 10 | pending job cap |
 | `StatusRetentionMinutes` | 60 | status and stale-scratch retention |
 | `FfmpegPath` / `FfprobePath` | `ffmpeg` / `ffprobe` | tool paths |

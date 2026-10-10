@@ -675,6 +675,9 @@ public sealed class ScraperOptions
     /// fetches additional pages beyond <see cref="MaxPagesPerLeaderboard"/>.
     /// This multiplier only controls the <b>trigger condition</b>; the valid-entry
     /// cutoff used for counting and pruning is <c>CHOptMax × <see cref="ValidCutoffMultiplier"/></c>.
+    /// The band page fetch and band extraction also flag a band entry as over
+    /// threshold when any member score exceeds its instrument's
+    /// <c>CHOptMax × OverThresholdMultiplier</c>.
     /// Default 1.05 = 5% above CHOpt's theoretical maximum.
     /// </summary>
     public double OverThresholdMultiplier { get; set; } = 1.05;
@@ -1018,6 +1021,15 @@ public sealed class ScraperOptions
     public int BandCurrentProjectionMaxParallelScopes { get; set; }
 
     /// <summary>
+    /// When true and <see cref="BandCurrentProjectionMaxParallelScopes"/> is
+    /// positive, the incremental refresh rebuilds all selected scopes of one
+    /// (song, band type) in one transaction that reads the song's band entries
+    /// and member stats once. Default false.
+    /// Set via <c>Scraper__BandCurrentProjectionBatchScopesBySourcePair</c>.
+    /// </summary>
+    public bool BandCurrentProjectionBatchScopesBySourcePair { get; set; }
+
+    /// <summary>
     /// Zero (default) publishes a band current-projection refresh in one
     /// transaction and then scans the whole projection for unpublished
     /// candidates. A positive value publishes one song per transaction with up
@@ -1035,6 +1047,14 @@ public sealed class ScraperOptions
     /// <c>Scraper__BandCurrentProjectionStaleScopeSweepMaxScopes</c>.
     /// </summary>
     public int BandCurrentProjectionStaleScopeSweepMaxScopes { get; set; }
+
+    /// <summary>
+    /// When true, the stale sweep derives its candidates and the unchanged-scope
+    /// selection from one scan of the band entries instead of two. The
+    /// selection is identical. Default false.
+    /// Set via <c>Scraper__BandCurrentProjectionSinglePassStaleSweep</c>.
+    /// </summary>
+    public bool BandCurrentProjectionSinglePassStaleSweep { get; set; }
 
     /// <summary>
     /// When true, BandMaintenance refreshes the band search projection one

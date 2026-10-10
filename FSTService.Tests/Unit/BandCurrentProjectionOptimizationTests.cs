@@ -976,6 +976,302 @@ public sealed class BandCurrentProjectionOptimizationTests(
         Assert.Null(await ScopeStatusAsync(fixture, scopes[0]));
     }
 
+    [Fact]
+    public async Task ComboMapMatchesComboExpressionInsideAndOutsideItsDomain()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        string[] inDomain =
+        [
+            "", "0", "10", "0:1", "1:0", "0:3", "3:0", "2:2", "0:10", "10:10", "0:2:2:9",
+            "4:5:6", "8:7:6:5", "0:1:2:3", "3:3:3:3", "10:9:8:7", "0:0:0:10",
+        ];
+        string[] outsideDomain = ["11", "0:12", "0:1:2:3:4", "01:1", "7:7:7:7:7:7"];
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = BandCurrentProjectionBuilder.GetComboIdComparisonSqlForTesting();
+        command.Parameters.AddWithValue("combos", inDomain.Concat(outsideDomain).ToArray());
+
+        var rows = new Dictionary<string, (string Expression, string Mapped, bool InMap)>(StringComparer.Ordinal);
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+                rows[reader.GetString(0)] = (reader.GetString(1), reader.GetString(2), reader.GetBoolean(3));
+        }
+
+        Assert.Equal(inDomain.Length + outsideDomain.Length, rows.Count);
+        foreach (var (combo, row) in rows)
+            Assert.True(row.Expression == row.Mapped, $"combo '{combo}': expression '{row.Expression}' != mapped '{row.Mapped}'");
+        Assert.All(inDomain, combo => Assert.True(rows[combo].InMap, combo));
+        Assert.All(outsideDomain, combo => Assert.False(rows[combo].InMap, combo));
+        Assert.Equal("Solo_Guitar+Solo_Bass", rows["1:0"].Mapped);
+        Assert.Equal("Solo_Guitar+Solo_Drums", rows["3:0"].Mapped);
+        Assert.Equal("Solo_Guitar", rows["0:10"].Mapped);
+        Assert.Equal(string.Empty, rows[string.Empty].Mapped);
+    }
+
+    [Fact]
+    public void PairSourceReadsSourceTablesOnceAndScopeSqlReadsOnlyThePairSource()
+    {
+        var pairSource = BandCurrentProjectionBuilder.GetPairSourceSqlForTesting();
+        var scopeSql = BandCurrentProjectionBuilder.GetRebuildScopeFromPairSourceSqlForTesting();
+
+        Assert.Equal(1, CountOccurrences(pairSource, "FROM band_entries be"));
+        Assert.Equal(1, CountOccurrences(pairSource, "FROM band_member_stats bms"));
+        Assert.DoesNotContain("ChosenEntries.", pairSource, StringComparison.Ordinal);
+        Assert.Contains("SELECT * FROM _band_pair_source", scopeSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("band_entries", scopeSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("band_member_stats", scopeSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("__MEMBER_STATS_", scopeSql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GroupBySourcePairKeepsEveryScopeOnceOverallFirstAndAlternatesBandTypes()
+    {
+        static BandCurrentProjectionScopeKey Scope(string songId, string bandType, string comboId) =>
+            new(songId, bandType, comboId.Length == 0 ? "overall" : "combo", comboId);
+        var scopes = new[]
+        {
+            Scope("a", "Band_Duets", "x"),
+            Scope("b", "Band_Quad", string.Empty),
+            Scope("a", "Band_Duets", string.Empty),
+            Scope("c", "Band_Duets", "y"),
+            Scope("d", "Band_Trios", "z"),
+            Scope("d", "Band_Trios", "w"),
+        };
+
+        var pairs = BandCurrentProjectionBuilder.GroupBySourcePair(scopes);
+
+        Assert.Equal(
+            ["a/Band_Duets", "b/Band_Quad", "d/Band_Trios", "c/Band_Duets"],
+            pairs.Select(static pair => $"{pair[0].SongId}/{pair[0].BandType}"));
+        Assert.Equal(["overall", "combo"], pairs[0].Select(static scope => scope.RankingScope));
+        Assert.Equal(["w", "z"], pairs[2].Select(static scope => scope.ScopeComboId));
+        Assert.Equal(
+            scopes.OrderBy(static scope => scope.ToString(), StringComparer.Ordinal),
+            pairs.SelectMany(static pair => pair).OrderBy(static scope => scope.ToString(), StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task PairBatchedRefreshPreservesPerScopeOutput(bool primed, bool skipUnchanged)
+    {
+        using var perScopeFixture = new InMemoryMetaDatabase();
+        using var pairFixture = new InMemoryMetaDatabase();
+        await SeedMixedPairsAsync(perScopeFixture);
+        await SeedMixedPairsAsync(pairFixture);
+        var scopes = await PairTestScopesAsync(perScopeFixture);
+        Assert.Equal(scopes, await PairTestScopesAsync(pairFixture));
+        Assert.Contains(scopes, static scope => scope.RankingScope == "combo");
+        if (primed)
+        {
+            await PrimeAsync(perScopeFixture, scopes);
+            await PrimeAsync(pairFixture, scopes);
+            string[] changedSongs = ["song-000", "song-003"];
+            await MarkSourceChangedAsync(perScopeFixture, changedSongs);
+            await MarkSourceChangedAsync(pairFixture, changedSongs);
+        }
+
+        var perScopeOptions = ProductionOptions(
+            useCandidate: true,
+            skipUnchanged: skipUnchanged,
+            maxParallelScopes: 6,
+            publishParallelism: 4);
+        var perScope = await CreateBuilder(perScopeFixture)
+            .RefreshScopesAsync(scopes, perScopeOptions);
+        var completed = new System.Collections.Concurrent.ConcurrentBag<BandCurrentProjectionScopeKey>();
+        var pair = await CreateBuilder(pairFixture)
+            .RefreshScopesAsync(
+                scopes,
+                perScopeOptions with { BatchScopesBySourcePair = true },
+                onScopeCompleted: completed.Add);
+
+        Assert.True(perScope.ScopeCount > 0);
+        if (!skipUnchanged)
+            Assert.Equal(scopes.Count, pair.ScopeCount);
+        Assert.Equal(perScope.ScopeCount, pair.ScopeCount);
+        Assert.Equal(0, pair.FailedScopes);
+        Assert.Equal(perScope.SuccessfulScopes, pair.SuccessfulScopes);
+        Assert.Equal(perScope.InsertedRows, pair.InsertedRows);
+        Assert.Equal(perScope.DeletedRows, pair.DeletedRows);
+        Assert.True(pair.PublishResult.Published);
+        Assert.Equal(perScope.PublishResult.PublishedRows, pair.PublishResult.PublishedRows);
+        Assert.Equal(pair.ScopeCount, completed.Distinct().Count());
+        Assert.Equal(
+            await StateHashAsync(perScopeFixture),
+            await StateHashAsync(pairFixture));
+
+        var refreshedPairs = pair.Scopes
+            .Select(static scope => (scope.SongId, scope.BandType))
+            .Distinct()
+            .ToArray();
+        Assert.Equal(refreshedPairs.Length, pair.OperationMetrics!.SuccessfulScopeTransactions);
+        Assert.Equal(
+            await NonOverThresholdSourceRowsAsync(pairFixture, refreshedPairs),
+            pair.OperationMetrics.DerivedMemberStatsAggregationPasses);
+        Assert.True(
+            pair.OperationMetrics.DerivedMemberStatsAggregationPasses
+            < perScope.OperationMetrics!.DerivedMemberStatsAggregationPasses);
+        Assert.True(
+            pair.OperationMetrics.SuccessfulScopeTransactions
+            < perScope.OperationMetrics.SuccessfulScopeTransactions);
+    }
+
+    [Fact]
+    public async Task PairBatchedFailureMarksEveryPairScopeFailedAndRetryPublishes()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        await SeedMixedPairsAsync(fixture);
+        var scopes = await PairTestScopesAsync(fixture);
+        await CreateInsertFailureTriggerAsync(fixture);
+        var builder = CreateBuilder(fixture);
+        var options = ProductionOptions(useCandidate: true, maxParallelScopes: 4) with
+        {
+            BatchScopesBySourcePair = true,
+        };
+        var completed = 0;
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> selected = [];
+
+        var failed = await builder.RefreshScopesAsync(
+            scopes,
+            options,
+            onScopesFinalized: scopesToRefresh => selected = scopesToRefresh,
+            onScopeCompleted: _ => Interlocked.Increment(ref completed));
+
+        // Every selected scope here belongs to a pair with source rows, so the
+        // first insert of each pair fails the whole pair transaction.
+        Assert.True(selected.Count > 0);
+        Assert.Equal(selected.Count, failed.ScopeCount);
+        Assert.Equal(selected.Count, failed.FailedScopes);
+        Assert.Equal(0, completed);
+        Assert.False(failed.PublishResult.Published);
+        Assert.Equal(0, await ProjectionRowCountAsync(fixture));
+        foreach (var scope in selected)
+            Assert.Equal("failed", await ScopeStatusAsync(fixture, scope));
+
+        await DropInsertFailureTriggerAsync(fixture);
+        var retry = await builder.RefreshScopesAsync(scopes, options);
+
+        Assert.Equal(0, retry.FailedScopes);
+        Assert.Equal(selected.Count, retry.ScopeCount);
+        Assert.True(retry.PublishResult.Published);
+        foreach (var scope in selected)
+            Assert.Equal("ready", await ScopeStatusAsync(fixture, scope));
+    }
+
+    private static async Task<IReadOnlyList<BandCurrentProjectionScopeKey>> PairTestScopesAsync(
+        InMemoryMetaDatabase fixture)
+    {
+        var scopes = (await CreateBuilder(fixture).LoadCurrentScopesAsync()).ToList();
+        // A combo scope without source rows and a song without any rows still
+        // get a ready, empty scope state on both paths.
+        scopes.Add(new BandCurrentProjectionScopeKey("song-000", "Band_Duets", "combo", "Solo_Vocals+Solo_PeripheralBass"));
+        scopes.Add(new BandCurrentProjectionScopeKey("song-999", "Band_Trios", "overall", string.Empty));
+        return scopes;
+    }
+
+    private static async Task SeedMixedPairsAsync(InMemoryMetaDatabase fixture)
+    {
+        var persistence = new BandLeaderboardPersistence(
+            fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        for (var songIndex = 0; songIndex < 5; songIndex++)
+        {
+            var songId = $"song-{songIndex:D3}";
+            var duets = new List<BandLeaderboardEntry>();
+            for (var teamIndex = 0; teamIndex < 14; teamIndex++)
+            {
+                // Pairs of teams tie on score; every third team also has a
+                // second combo and every fourth a third, so the overall scope
+                // has to choose among a team's combos.
+                var score = 1_000_000 - teamIndex / 2 * 10;
+                var endTime = $"2026-08-16T00:{teamIndex % 4:D2}:00Z";
+                duets.Add(MixedEntry(songIndex, 2, teamIndex, "0:1", score, endTime));
+                if (teamIndex % 3 == 0)
+                    duets.Add(MixedEntry(songIndex, 2, teamIndex, "0:3", score + 5, endTime));
+                if (teamIndex % 4 == 0)
+                    duets.Add(MixedEntry(songIndex, 2, teamIndex, "1:3", score + 5, string.Empty));
+            }
+            persistence.UpsertBandEntries(songId, "Band_Duets", duets);
+
+            if (songIndex < 3)
+            {
+                var trios = new List<BandLeaderboardEntry>();
+                for (var teamIndex = 0; teamIndex < 9; teamIndex++)
+                {
+                    var score = 2_000_000 - teamIndex * 7;
+                    trios.Add(MixedEntry(songIndex, 3, teamIndex, "0:1:3", score, "2026-08-17T01:00:00Z"));
+                    if (teamIndex % 2 == 1)
+                        trios.Add(MixedEntry(songIndex, 3, teamIndex, "0:1:2", score - 3, "2026-08-17T00:30:00Z"));
+                }
+                persistence.UpsertBandEntries(songId, "Band_Trios", trios);
+            }
+        }
+
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE band_entries
+            SET is_over_threshold = TRUE
+            WHERE (band_type = 'Band_Duets' AND team_key LIKE '%-005-a%' AND instrument_combo = '0:1')
+               OR (band_type = 'Band_Trios' AND team_key LIKE '%-002-a%')
+            """;
+        Assert.True(await command.ExecuteNonQueryAsync() > 0);
+    }
+
+    private static BandLeaderboardEntry MixedEntry(
+        int songIndex,
+        int memberCount,
+        int teamIndex,
+        string instrumentCombo,
+        int score,
+        string endTime)
+    {
+        var members = Enumerable.Range(0, memberCount)
+            .Select(member => $"acct-{memberCount}-{songIndex:D3}-{teamIndex:D3}-{(char)('a' + member)}")
+            .ToArray();
+        var instruments = instrumentCombo.Split(':').Select(int.Parse).ToArray();
+        return new BandLeaderboardEntry
+        {
+            TeamKey = string.Join(':', members.Order(StringComparer.Ordinal)),
+            TeamMembers = members,
+            InstrumentCombo = instrumentCombo,
+            Score = score,
+            Accuracy = 990_000 - teamIndex,
+            IsFullCombo = teamIndex % 3 == 0,
+            Stars = 5,
+            Difficulty = 3,
+            Season = 1,
+            Rank = teamIndex + 1,
+            Percentile = (teamIndex + 1d) / 100d,
+            EndTime = endTime.Length == 0 ? null : endTime,
+            Source = "test",
+            MemberStats =
+            [
+                .. members.Select((account, index) => Member(index, account, instruments[index], teamIndex)),
+            ],
+        };
+    }
+
+    private static async Task<long> NonOverThresholdSourceRowsAsync(
+        InMemoryMetaDatabase fixture,
+        IReadOnlyCollection<(string SongId, string BandType)> pairs)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM band_entries
+            WHERE NOT is_over_threshold
+              AND (song_id || '/' || band_type) = ANY(@pairs)
+            """;
+        command.Parameters.AddWithValue(
+            "pairs",
+            pairs.Select(static pair => $"{pair.SongId}/{pair.BandType}").ToArray());
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
     private static BandCurrentProjectionRebuildOptions
         ProductionOptions(
             bool useCandidate,
