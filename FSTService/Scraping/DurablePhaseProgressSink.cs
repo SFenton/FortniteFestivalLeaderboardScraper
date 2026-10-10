@@ -165,6 +165,7 @@ public sealed class DurablePhaseProgressSink
         "Scraper:UseRankHistoryLatestState",
         "Scraper:RivalsMaxDegreeOfParallelism",
         "Scraper:LeaderboardRivalsMaxDegreeOfParallelism",
+        "Scraper:LeaderboardRivalsInstrumentParallelism",
         "Scraper:RefreshCurrentSeasonSessions",
         "Features:EnforcePublicationCriticalPhases",
         "Features:EnforceScopeCompletenessManifests",
