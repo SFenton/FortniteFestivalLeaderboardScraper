@@ -14,6 +14,30 @@ namespace FSTService.Tests.Unit;
 
 public sealed class RankingsCalculatorTests : IDisposable
 {
+    [Fact]
+    public void OrderSnapshotItems_puts_composite_first_then_instruments_by_ranked_accounts()
+    {
+        var counts = new Dictionary<string, long>
+        {
+            ["Solo_Guitar"] = 868_430,
+            ["Solo_Bass"] = 1_418_501,
+            ["Solo_Vocals"] = 718_450,
+            ["Solo_PeripheralBass"] = 1_510_579,
+            ["Solo_PeripheralCymbals"] = 5_955,
+        };
+
+        var ordered = RankingsCalculator.OrderSnapshotItems(
+            ["Solo_Guitar", "Solo_Bass", "Solo_Vocals", "Solo_PeripheralCymbals", "Solo_Unknown", "Solo_PeripheralBass"],
+            instrument => counts.GetValueOrDefault(instrument));
+
+        Assert.True(ordered[0].IsComposite);
+        Assert.Null(ordered[0].Instrument);
+        Assert.Equal(
+            ["Solo_PeripheralBass", "Solo_Bass", "Solo_Guitar", "Solo_Vocals", "Solo_PeripheralCymbals", "Solo_Unknown"],
+            ordered.Skip(1).Select(static item => item.Instrument));
+        Assert.All(ordered.Skip(1), static item => Assert.False(item.IsComposite));
+    }
+
     private readonly string _tempDir;
     private readonly InMemoryMetaDatabase _metaFixture;
     private readonly GlobalLeaderboardPersistence _persistence;

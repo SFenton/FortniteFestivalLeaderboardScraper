@@ -3422,6 +3422,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return GetRankedAccountCountWithBackfill(conn);
     }
 
+    public int? GetCachedRankedAccountCount()
+    {
+        using var conn = _ds.OpenConnection();
+        return GetCachedRankedAccountCount(conn);
+    }
+
     public int GetTotalChartedSongs()
     {
         using var conn = _ds.OpenConnection();
