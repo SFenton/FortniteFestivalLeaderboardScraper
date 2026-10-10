@@ -226,6 +226,19 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   instead of 7.3 and 2.6.
 - Since the scrape `1512` boundary the local bundle `b26778a2` adds #198 (solo
   projection schema ensured once per process).
+- Since the scrape `1520` boundary, `Scraper__BandRetentionFloorApplyToExtraction=true`
+  (#200; with #199's rank-history fillfactor). Scrape `1521` extraction wrote 7
+  band entries instead of re-inserting about 39,400 that prune then deleted.
+- Since the scrape `1521` boundary, `Scraper__BandPruneChangedScopesOnly=true`
+  (#202), with #204's longest-first rank-history snapshots: scrape `1522`'s
+  snapshots took 646 seconds (718 in `1521`, 773 to 854 before).
+- Since the scrape `1522` boundary,
+  `Scraper__BandCurrentProjectionStaleSweepChangedPairsOnly=true` (#205), with
+  #207 (indexed override ranks in per-instrument solo rankings). The
+  PostgreSQL container memory limit was also raised live from 16 to 24 GiB
+  (`docker update`, memory-swap 28 GiB) as a page-cache experiment; the
+  production Compose default `FST_POSTGRES_MEM_LIMIT` is still 16 GiB, so a
+  recreate reverts it.
 
   See [worker: band current projection](../components/worker.md) and
   [worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
