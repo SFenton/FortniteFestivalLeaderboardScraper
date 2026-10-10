@@ -378,6 +378,29 @@ frequently. `DatabaseInitializer` and its tests are the schema inventory;
 canonical documentation describes ownership and invariants instead of copying
 volatile table counts.
 
+### Solo current-state resolution
+
+Worker readers that bypass `current_leaderboard_entries` (rankings, song
+stats, over-threshold detection, and fallbacks when no ready projection scope
+exists) resolve one instrument's current rows from three sources:
+
+- active finalized snapshot rows for songs that have a finalized snapshot;
+- legacy `leaderboard_entries` rows for songs that have none, unless
+  `Features:UseSnapshotOverlayWorkerReaders` is on;
+- `leaderboard_entries_overlay` rows, which win per account.
+
+Legacy and snapshot rows cover disjoint songs, and each source is unique per
+song and account by its primary key. Overlay rows are unique per song,
+instrument, and account. So resolution is overlay rows plus the base rows of
+accounts without an overlay row; no `DISTINCT ON` sort is needed. Legacy songs
+are found with a loose index scan (one primary-key probe per distinct song)
+rather than by reading the legacy partition (about 2.4 GB for Solo_Guitar, 1.7
+seconds, to find no such song). Until 2026-10-10 each full-instrument
+resolution also sorted every row: 7.2 million for Solo_Guitar, spilling about
+690 MB. On production data the form without the sort returned identical rows
+(Solo_Drums, 7,096,880 rows, `EXCEPT ALL` both ways) and identical Solo_Guitar
+per-song counts in 12.3 s instead of 20.5 s, before the legacy change.
+
 ### Legacy solo rank-index retirement
 
 `ix_le_song_rank` is not bootstrap schema and is not a scrape-time droppable or
