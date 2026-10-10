@@ -402,6 +402,15 @@ public sealed class ScraperOptions
     public int RankHistorySnapshotMaxDegreeOfParallelism { get; set; } = 1;
 
     /// <summary>
+    /// When true and <c>BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings</c>
+    /// is on, scheduled rankings start the rank-history snapshot and band-ranking
+    /// branches right after per-instrument rankings are loaded, concurrently with
+    /// composite, solo family, and combo rankings. The composite snapshot waits
+    /// for composite rankings and is skipped if they fail.
+    /// </summary>
+    public bool StartRankHistorySnapshotsAfterInstrumentRankings { get; set; }
+
+    /// <summary>
     /// When true, rank-history snapshots compare current rankings against the
     /// maintained <c>rank_history_latest</c> / <c>composite_rank_history_latest</c>
     /// rows instead of scanning each instrument's and the composite's whole history.

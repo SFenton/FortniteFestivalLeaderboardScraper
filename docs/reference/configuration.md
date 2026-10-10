@@ -484,6 +484,7 @@ on-demand and maintenance-lease paths.
 | `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
 | `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
 | `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
+| `Scraper:StartRankHistorySnapshotsAfterInstrumentRankings` | `false` | With the overlap option on, start the snapshot and band-ranking branches right after per-instrument rankings, concurrently with composite, solo family, and combo rankings; see below |
 | `Scraper:UseRankHistoryLatestState` | `false` | Compare rank-history snapshots against the maintained latest row per account instead of scanning each instrument's and the composite's whole history; see below |
 
 Per-instrument solo rankings always run at most two instruments at once to
@@ -515,6 +516,21 @@ instruments by ranked account count, which tracks their snapshot time. Until
 2026-10-10 composite ran last, so with two writers its snapshot of about 270
 seconds ran alone at the end. In scrapes `1509` to `1513` the snapshots took
 773 to 834 seconds against about 726 seconds of work per writer.
+
+`Scraper:StartRankHistorySnapshotsAfterInstrumentRankings` moves the
+overlapped snapshot and band-ranking branches earlier. Per-instrument snapshots
+and band rankings need only the per-instrument rankings, so they start once
+those are loaded and run alongside composite, solo family, and combo rankings
+(66, 109, and 121 seconds in scrape `1523`). The composite snapshot starts
+after the first `RankHistorySnapshotMaxDegreeOfParallelism` instrument
+snapshots, waits for composite rankings, and is skipped if they fail. If
+composite, solo family, or combo rankings fail, the worker stops starting new
+snapshot items and band types, waits for in-flight ones, and fails the pass as
+before. In-flight items commit, as they would if a later post-scrape phase
+failed: they derive only from committed per-instrument rankings and band
+entries, a retry rewrites them, and band rankings reach public reads only
+through publication. Scheduled scrapes only: max-score maintenance keeps the
+original order. `false` is the rollback.
 
 Each per-instrument pass materializes valid current entries into the session
 temp table `_valid_entries` and over-threshold fallbacks into
