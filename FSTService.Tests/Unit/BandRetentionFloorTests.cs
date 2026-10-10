@@ -107,6 +107,61 @@ public sealed class BandRetentionFloorTests : IDisposable
         Assert.True(belowFloor > 0, "The floor never applied, so the comparison proves nothing.");
     }
 
+    [Theory]
+    [InlineData(11)]
+    [InlineData(12)]
+    [InlineData(13)]
+    [InlineData(14)]
+    public void Enforced_floor_in_direct_upserts_leaves_the_same_rows_as_writing_everything(int seed)
+    {
+        var random = new Random(seed);
+        var registered = new HashSet<string>(["reg-1"], StringComparer.OrdinalIgnoreCase);
+        var enforced = Persistence(_enforced);
+        var baseline = Persistence(_baseline);
+        var songs = new[] { "song-a", "song-b" };
+        foreach (var song in songs)
+        {
+            var board = GenerateBoard(random, song, 14);
+            Upsert(enforced, song, board);
+            Upsert(baseline, song, board);
+        }
+
+        enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+        baseline.PruneBandEntriesDetailed(registered, MaxValid);
+
+        long belowFloor = 0;
+        for (var round = 0; round < 3; round++)
+        {
+            var staged = songs.ToDictionary(
+                static song => song,
+                song => GenerateStagedPage(random, song, ReadKeys(_baseline, song), round));
+
+            // Extraction reuses the scrape's prepared filter.
+            var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+            filter.PrepareForFlush(_enforced.DataSource);
+            foreach (var (song, entries) in staged)
+            {
+                using (var conn = enforced.DataSource.OpenConnection())
+                using (var tx = conn.BeginTransaction())
+                {
+                    enforced.UpsertBandEntriesDirect(song, BandType, entries, conn, tx, rebuildTeamMembership: false, retentionFloor: filter);
+                    tx.Commit();
+                }
+
+                Upsert(baseline, song, entries);
+            }
+
+            belowFloor += filter.BelowFloorRows;
+            var pruned = enforced.PruneBandEntriesDetailed(registered, MaxValid, captureRetentionFloor: true, retentionFloorMarginRows: 0);
+            baseline.PruneBandEntriesDetailed(registered, MaxValid);
+
+            Assert.Equal(0, pruned.RetentionFloor!.ShadowRowsKept);
+            Assert.Equal(Snapshot(_baseline), Snapshot(_enforced));
+        }
+
+        Assert.True(belowFloor > 0, "The floor never applied, so the comparison proves nothing.");
+    }
+
     [Fact]
     public async Task Report_mode_keeps_rows_and_prune_reports_no_survivors()
     {

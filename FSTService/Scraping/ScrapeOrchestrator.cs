@@ -739,6 +739,7 @@ public sealed class ScrapeOrchestrator
         var ctx = new ScrapePassContext
         {
             ScrapeId = scrapeId,
+            BandRetentionFloor = bandRetentionFloor,
             AccessToken = accessToken,
             CallerAccountId = callerAccountId,
             RegisteredIds = registeredIds,
