@@ -636,6 +636,13 @@ whose active snapshot is not the published scrape re-resolves snapshot and
 overlay rows for the active snapshot, which is what the projection already
 holds; that resolution dominated precompute database time in scrape `1457`.
 
+When precompute runs its phases sequentially (the default,
+`Scraper:RunPrecomputePhasesInParallel=false`), it logs one
+`[Precompute.Phase] phase=<name> elapsed_ms=<ms> staged_records=<n>` line per
+phase: `players`, `leaderboard_all`, `song_band_leaderboards`,
+`player_sub_resources`, `rankings_pages`, `neighborhoods`, and `first_seen`.
+Leeway metadata is logged separately before them.
+
 A production-shaped PostgreSQL 17 A/B rejected adding an explicit target-song
 array predicate to the compatibility current-state query. Exact row/hash
 parity passed, but dense 50-, 379-, and 707-song cases regressed by
