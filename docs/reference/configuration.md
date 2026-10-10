@@ -288,9 +288,11 @@ invalid/non-positive values prevent startup.
 | `Scraper:BandCurrentProjectionBatchScopesBySourcePair` | `false` | With `MaxParallelScopes` above `0`, rebuild all selected scopes of one song and band type in one transaction that reads the song's band entries and member stats once |
 | `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
+| `Scraper:BandCurrentProjectionSinglePassStaleSweep` | `false` | Derive the stale sweep's candidates and its unchanged-scope selection from one scan of the band entries instead of two; same selection |
 | `Scraper:BandSearchProjectionParallelBandTypes` | `false` | Refresh the band search projection one band type per concurrent transaction |
 | `Scraper:BandSpoolFlushMaxParallelBandTypes` | `1` | How many band types the post-fetch band spool flush writes at once; clamped to the number of band types |
 | `Scraper:BandRetentionFloorMode` | `Off` | Band retention floor for the post-fetch band flush. `Report` records staged new rows that rank below the floor band prune last recorded for their scope, and the next prune counts how many of them it would keep; `Enforce` also skips those rows; `Off` does neither. See [worker: band retention floor](../components/worker.md#band-retention-floor) |
+| `Scraper:OverThresholdMultiplier` | `1.05` | Solo deep-scrape trigger (`CHOptMax × multiplier`) and the band over-threshold flag: a band entry is over threshold when any member's score exceeds that member's instrument CHOpt max times this multiplier. The band page fetch and band extraction both apply it |
 | `Scraper:BandRetentionFloorMarginRows` | `100` | Rows between band prune's last kept window row and the recorded retention floor; absorbs over-threshold flips at the top of a leaderboard between the flush and prune |
 
 The Compose form is
@@ -338,6 +340,14 @@ deterministic order) without filtering again. A sweep failure is logged and
 the refresh continues with the impacted scopes. The switch is part of the durable
 phase configuration identity; `0` disables it.
 
+`Scraper__BandCurrentProjectionSinglePassStaleSweep` (template variable
+`BAND_CURRENT_PROJECTION_SINGLE_PASS_STALE_SWEEP`) applies only when the sweep
+is enabled. It reads the band entries once: the per-scope projected row
+counts and latest source updates go into a temporary table, and both the
+candidate keys and the unchanged-scope selection come from it. The selected
+scopes and candidate count match the two-pass sweep. It is part of the durable
+phase configuration identity; `false` is the rollback.
+
 `Scraper__BandSearchProjectionParallelBandTypes` (template variable
 `BAND_SEARCH_PROJECTION_PARALLEL_BAND_TYPES`) makes BandMaintenance's
 `search_projection_refresh` subphase refresh each band type in its own
@@ -382,6 +392,7 @@ configuration rollback is independently setting each enable flag to `false`.
 | `Scraper:PrepareSoloCurrentProjectionBeforeRivals` | `false` | boolean | With legacy worker readers, refresh stale solo current-projection scopes before rivals and player stats |
 | `Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders` | `false` | boolean | After that early refresh leaves no stale or orphaned scope, legacy rivals, leaderboard-rivals, and player-stats readers match ready projection scopes against the active snapshot during the freeze |
 | `Scraper:UseValidatedSoloProjectionForLegacyPrecompute` | `false` | boolean | After publication cleanup's projection refresh leaves no stale or orphaned scope, legacy precompute readers match ready projection scopes against the active snapshot until precompute ends |
+| `Scraper:SoloCurrentProjectionApplyDiff` | `false` | boolean | A solo current-projection scope refresh writes only the rows that differ from the stored projection, keeping the scope's generation, instead of deleting and re-inserting every row |
 
 The Compose form is `Scraper__RivalsMaxDegreeOfParallelism`. Scheduled
 post-scrape rivals first load all target users' current scores once per
@@ -431,6 +442,13 @@ scope, so any scope that changes later falls back as before. Read-only
 production parity on 25 rivals accounts found identical rows (all columns)
 from both paths: Solo Guitar `8,055`, Solo Bass `4,764`, Pro Drums `141`.
 It is part of the durable phase configuration identity; set it to `false` for
+rollback.
+
+`Scraper__SoloCurrentProjectionApplyDiff` changes how every solo
+current-projection scope refresh writes (early refresh, cleanup, and
+notification recovery). See
+[worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
+It is part of the durable phase configuration identity; `false` is the
 rollback.
 
 ## Leaderboard rivals

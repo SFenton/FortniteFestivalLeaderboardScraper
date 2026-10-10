@@ -46,14 +46,17 @@ public sealed class SoloCurrentProjectionBuilder
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<SoloCurrentProjectionBuilder> _log;
     private readonly bool _useSnapshotOverlayWorkerReaders;
+    private readonly bool _applyDiff;
 
     public SoloCurrentProjectionBuilder(
         NpgsqlDataSource dataSource,
         ILogger<SoloCurrentProjectionBuilder> log,
-        IOptions<FeatureOptions>? featureOptions = null)
+        IOptions<FeatureOptions>? featureOptions = null,
+        IOptions<ScraperOptions>? scraperOptions = null)
     {
         _dataSource = dataSource;
         _log = log;
+        _applyDiff = scraperOptions?.Value.SoloCurrentProjectionApplyDiff == true;
         _useSnapshotOverlayWorkerReaders = featureOptions?.Value is
         {
             UseSnapshotOverlayWorkerReaders: true,
@@ -467,7 +470,8 @@ public sealed class SoloCurrentProjectionBuilder
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             ApplyCommandOptions(cmd, options);
-            cmd.CommandText = RebuildScopeSql;
+            var applyDiff = options.ApplyDiff ?? _applyDiff;
+            cmd.CommandText = applyDiff ? RebuildScopeApplyDiffSql : RebuildScopeSql;
             cmd.Parameters.AddWithValue("songId", scope.SongId);
             cmd.Parameters.AddWithValue("instrument", scope.Instrument);
             cmd.Parameters.AddWithValue("generation", generation);
@@ -484,6 +488,8 @@ public sealed class SoloCurrentProjectionBuilder
             long wouldInsertRows = 0;
             long wouldUpdateRows = 0;
             long wouldDeleteRows = 0;
+            long updatedRows = 0;
+            var diffApplied = false;
 
             await using (var reader = await cmd.ExecuteReaderAsync(ct))
             {
@@ -499,6 +505,11 @@ public sealed class SoloCurrentProjectionBuilder
                     wouldInsertRows = reader.GetInt64(7);
                     wouldUpdateRows = reader.GetInt64(8);
                     wouldDeleteRows = reader.GetInt64(9);
+                    if (applyDiff)
+                    {
+                        updatedRows = reader.GetInt64(10);
+                        diffApplied = reader.GetBoolean(11);
+                    }
                 }
             }
 
@@ -509,7 +520,7 @@ public sealed class SoloCurrentProjectionBuilder
 
             sw.Stop();
             _log.LogInformation(
-                "Solo current projection diff metrics for {SongId}/{Instrument}: existing={ExistingRows:N0}, desired={DesiredRows:N0}, unchanged={UnchangedRows:N0}, would_insert={WouldInsertRows:N0}, would_update={WouldUpdateRows:N0}, would_delete={WouldDeleteRows:N0}.",
+                "Solo current projection diff metrics for {SongId}/{Instrument}: existing={ExistingRows:N0}, desired={DesiredRows:N0}, unchanged={UnchangedRows:N0}, would_insert={WouldInsertRows:N0}, would_update={WouldUpdateRows:N0}, would_delete={WouldDeleteRows:N0}, diff_applied={DiffApplied}.",
                 scope.SongId,
                 scope.Instrument,
                 existingRows,
@@ -517,7 +528,8 @@ public sealed class SoloCurrentProjectionBuilder
                 unchangedRows,
                 wouldInsertRows,
                 wouldUpdateRows,
-                wouldDeleteRows);
+                wouldDeleteRows,
+                diffApplied);
             return new SoloCurrentProjectionScopeResult(
                 scope.SongId,
                 scope.Instrument,
@@ -526,7 +538,9 @@ public sealed class SoloCurrentProjectionBuilder
                 deletedRows,
                 sourceSnapshotId,
                 sourceScopeExists,
-                Math.Round(sw.Elapsed.TotalMilliseconds, 3));
+                Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+                updatedRows,
+                diffApplied);
         }
         catch (Exception ex)
         {
@@ -837,7 +851,9 @@ public sealed class SoloCurrentProjectionBuilder
             ON solo_current_projection_scope (status, updated_at DESC);
         """;
 
-    private static readonly string RebuildScopeSql = $"""
+    // Shared through diff_metrics: the desired rows of the scope and their
+    // differences from the stored projection rows.
+    private static readonly string RebuildScopePrefixSql = $"""
         WITH active_snapshot AS (
             SELECT active_snapshot_id
             FROM leaderboard_snapshot_state
@@ -973,6 +989,9 @@ public sealed class SoloCurrentProjectionBuilder
                    COUNT(*) FILTER (WHERE existing_account_id IS NOT NULL AND desired_account_id IS NOT NULL AND NOT unchanged)::BIGINT AS would_update_count,
                    COUNT(*) FILTER (WHERE existing_account_id IS NOT NULL AND desired_account_id IS NULL)::BIGINT AS would_delete_count
             FROM diff_rows
+        """;
+
+    private const string RebuildScopeFullRewriteSuffixSql = """
         ), deleted_projection AS (
             DELETE FROM current_leaderboard_entries
             WHERE song_id = @songId
@@ -1049,6 +1068,166 @@ public sealed class SoloCurrentProjectionBuilder
                diff_metrics.would_delete_count
         FROM diff_metrics
         """;
+
+    private static readonly string RebuildScopeSql =
+        RebuildScopePrefixSql + "\n" + RebuildScopeFullRewriteSuffixSql;
+
+    // Applies only the differences when the scope is ready and every stored
+    // row carries the scope's generation: rows that left the source are
+    // deleted, changed rows are updated in place and new rows are inserted, all
+    // under the scope's existing generation, so unchanged rows are not
+    // rewritten. Otherwise it rewrites the scope under @generation exactly like
+    // RebuildScopeFullRewriteSuffixSql. Either way the final rows equal the
+    // desired rows.
+    private const string RebuildScopeApplyDiffSuffixSql = """
+        ), scope_state AS (
+            SELECT projection_generation, status
+            FROM solo_current_projection_scope
+            WHERE song_id = @songId
+              AND instrument = @instrument
+        ), apply_diff AS (
+            SELECT (SELECT exists FROM source_scope)
+                   AND EXISTS (SELECT 1 FROM scope_state WHERE status = 'ready')
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM current_leaderboard_entries stored
+                       WHERE stored.song_id = @songId
+                         AND stored.instrument = @instrument
+                         AND stored.projection_generation IS DISTINCT FROM
+                               (SELECT projection_generation FROM scope_state)
+                   ) AS enabled
+        ), target AS (
+            SELECT CASE
+                       WHEN (SELECT enabled FROM apply_diff)
+                       THEN (SELECT projection_generation FROM scope_state)
+                       ELSE @generation
+                   END AS generation
+        ), deleted_projection AS (
+            DELETE FROM current_leaderboard_entries stored
+            WHERE stored.song_id = @songId
+              AND stored.instrument = @instrument
+              AND (
+                  NOT (SELECT enabled FROM apply_diff)
+                  OR NOT EXISTS (
+                      SELECT 1 FROM ranked_rows desired WHERE desired.account_id = stored.account_id)
+              )
+            RETURNING 1
+        ), delete_barrier AS (
+            SELECT COUNT(*)::BIGINT AS deleted_row_count
+            FROM deleted_projection
+        ), updated AS (
+            UPDATE current_leaderboard_entries stored
+            SET score = desired.score,
+                accuracy = desired.accuracy,
+                is_full_combo = desired.is_full_combo,
+                stars = desired.stars,
+                season = desired.season,
+                difficulty = desired.difficulty,
+                percentile = desired.percentile,
+                end_time = desired.end_time,
+                rank = desired.rank,
+                api_rank = desired.api_rank,
+                source = desired.source,
+                first_seen_at = desired.first_seen_at,
+                last_updated_at = desired.last_updated_at,
+                computed_at = @now
+            FROM ranked_rows desired
+            JOIN diff_rows diff
+              ON diff.desired_account_id = desired.account_id
+             AND diff.existing_account_id IS NOT NULL
+             AND NOT diff.unchanged
+            WHERE (SELECT enabled FROM apply_diff)
+              AND stored.song_id = @songId
+              AND stored.instrument = @instrument
+              AND stored.account_id = desired.account_id
+            RETURNING 1
+        ), inserted AS (
+            INSERT INTO current_leaderboard_entries
+            (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty,
+             percentile, end_time, rank, api_rank, source, first_seen_at, last_updated_at, projection_generation, computed_at)
+            SELECT @songId, @instrument, desired.account_id, desired.score, desired.accuracy, desired.is_full_combo,
+                   desired.stars, desired.season, desired.difficulty, desired.percentile, desired.end_time,
+                   desired.rank, desired.api_rank, desired.source, desired.first_seen_at, desired.last_updated_at,
+                   (SELECT generation FROM target), @now
+            FROM ranked_rows desired
+            CROSS JOIN delete_barrier
+            WHERE (SELECT exists FROM source_scope)
+              AND (
+                  NOT (SELECT enabled FROM apply_diff)
+                  OR NOT EXISTS (
+                      SELECT 1 FROM existing_rows stored WHERE stored.account_id = desired.account_id)
+              )
+            RETURNING 1
+        ), scope_deleted AS (
+            DELETE FROM solo_current_projection_scope
+            WHERE song_id = @songId
+              AND instrument = @instrument
+              AND NOT (SELECT exists FROM source_scope)
+            RETURNING 1
+        ), scope_upsert AS (
+            INSERT INTO solo_current_projection_scope
+            (song_id, instrument, projection_generation, row_count, existing_row_count, desired_row_count,
+             unchanged_row_count, would_insert_count, would_update_count, would_delete_count,
+             source_snapshot_id, source_kind, status, error_message, last_rebuilt_at, updated_at)
+            SELECT @songId,
+                   @instrument,
+                   (SELECT generation FROM target),
+                   CASE WHEN (SELECT enabled FROM apply_diff)
+                        THEN diff_metrics.desired_row_count
+                        ELSE (SELECT COUNT(*)::BIGINT FROM inserted)
+                   END,
+                   diff_metrics.existing_row_count,
+                   diff_metrics.desired_row_count,
+                   diff_metrics.unchanged_row_count,
+                   diff_metrics.would_insert_count,
+                   diff_metrics.would_update_count,
+                   diff_metrics.would_delete_count,
+                   (SELECT active_snapshot_id FROM active_snapshot),
+                   (SELECT source_kind FROM source_scope),
+                   'ready',
+                   NULL,
+                   @now,
+                   @now
+            FROM diff_metrics
+            WHERE (SELECT exists FROM source_scope)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                projection_generation = EXCLUDED.projection_generation,
+                row_count = EXCLUDED.row_count,
+                existing_row_count = EXCLUDED.existing_row_count,
+                desired_row_count = EXCLUDED.desired_row_count,
+                unchanged_row_count = EXCLUDED.unchanged_row_count,
+                would_insert_count = EXCLUDED.would_insert_count,
+                would_update_count = EXCLUDED.would_update_count,
+                would_delete_count = EXCLUDED.would_delete_count,
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                source_kind = EXCLUDED.source_kind,
+                status = EXCLUDED.status,
+                error_message = EXCLUDED.error_message,
+                last_rebuilt_at = EXCLUDED.last_rebuilt_at,
+                updated_at = EXCLUDED.updated_at
+            RETURNING row_count
+        )
+        SELECT (SELECT COUNT(*)::BIGINT FROM inserted),
+               (SELECT deleted_row_count FROM delete_barrier),
+               (SELECT active_snapshot_id FROM active_snapshot),
+               (SELECT exists FROM source_scope),
+               diff_metrics.existing_row_count,
+               diff_metrics.desired_row_count,
+               diff_metrics.unchanged_row_count,
+               diff_metrics.would_insert_count,
+               diff_metrics.would_update_count,
+               diff_metrics.would_delete_count,
+               (SELECT COUNT(*)::BIGINT FROM updated),
+               (SELECT enabled FROM apply_diff)
+        FROM diff_metrics
+        """;
+
+    private static readonly string RebuildScopeApplyDiffSql =
+        RebuildScopePrefixSql + "\n" + RebuildScopeApplyDiffSuffixSql;
+
+    internal static string GetRebuildScopeSqlForTesting(bool applyDiff) =>
+        applyDiff ? RebuildScopeApplyDiffSql : RebuildScopeSql;
+
 }
 
 public sealed class SoloCurrentProjectionRebuildOptions
@@ -1057,6 +1236,12 @@ public sealed class SoloCurrentProjectionRebuildOptions
     public bool DisableSynchronousCommit { get; init; } = true;
     public bool ClearExisting { get; init; }
     public int MaxDegreeOfParallelism { get; init; } = 1;
+
+    /// <summary>
+    /// Overrides <c>Scraper:SoloCurrentProjectionApplyDiff</c> for this call
+    /// when set.
+    /// </summary>
+    public bool? ApplyDiff { get; init; }
 }
 
 public sealed record SoloCurrentProjectionScopeKey(string SongId, string Instrument);
@@ -1090,7 +1275,9 @@ public sealed record SoloCurrentProjectionScopeResult(
     long DeletedRows,
     long? SourceSnapshotId,
     bool SourceScopeExists,
-    double ElapsedMs);
+    double ElapsedMs,
+    long UpdatedRows = 0,
+    bool DiffApplied = false);
 
 public sealed record SoloCurrentProjectionIncrementalRefreshResult(
     int ScopeCount,

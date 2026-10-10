@@ -870,6 +870,28 @@ rebuilt between 2026-06-01 and 2026-09-20; 2,652 with a different row count)
 serving stale published rows, for example 71 published versus 30 current
 rows. The stale sweep converges them within its cap.
 
+The sweep still reads the band entries twice: once to load every source scope
+and once in the filter. In scrape `1509` the two passes took 3.2 minutes for
+110,042 candidates and 49,176 impacted scopes, about as long as the pair
+rebuild and publish that followed. `Scraper:BandCurrentProjectionSinglePassStaleSweep`
+(default `false`) makes it one pass:
+
+1. One scan records each source scope's projected row count (distinct teams)
+   and latest source update in a temporary table.
+2. The candidate keys come from that table plus the projection scope keys and
+   are normalized and de-duplicated as before.
+3. The unchanged-scope selection joins the table instead of scanning the
+   entries again.
+
+The selected impacted and stale scopes and the candidate count match the
+two-pass sweep.
+
+Both the sweep's source-scope load and the filter look combo ids up in a map
+built once per statement. The map covers every combo of one to four instrument
+ids from 0 to 10, plus the empty combo. That replaces about 20 million
+evaluations of the combo-id expression. Any other value falls back to the
+expression, and a PostgreSQL test checks that the map and the expression agree.
+
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
 nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and
@@ -882,6 +904,34 @@ still measures seven baseline scans versus one candidate scan. Local elapsed
 reductions are diagnostic only; no production improvement is accepted. A
 matched full-scrape A/B remains blocked until the FST capacity guard again has
 at least one `60.4 GB` scrape window, preferably two (`120.8 GB`).
+
+### Solo current projection writes
+
+Snapshot activation gives nearly every solo scope a new source, so each scrape
+refreshes nearly all of them. Scrape `1509` refreshed 1,288 scopes before
+Rivals (133 seconds) and all 6,240 in `Cleanup.SoloCurrentProjection`
+(42,527,106 rows, 378 seconds). Each refresh compares the desired rows with the
+stored ones and records the result in `solo_current_projection_scope`. A full
+scope typically has about 10,000 rows, of which 3–7 differ. The refresh
+nevertheless deletes and re-inserts every row under a new generation,
+maintaining four indexes per row.
+
+`Scraper:SoloCurrentProjectionApplyDiff` (default `false`) writes only the
+differences when the scope is ready and every stored row carries the scope's
+generation:
+
+- rows that left the source are deleted;
+- changed rows are updated in place;
+- new rows are inserted under the scope's existing generation.
+
+Otherwise, for example for a new, failed, or mixed-generation scope, it
+rewrites the scope under the new generation as before. Either way the stored
+rows equal the desired rows. Readers join rows to their scope by generation, so
+an unchanged generation keeps every row visible. `projection_generation` and
+`computed_at` of unchanged rows stay at their last write. The per-scope log
+line reports `diff_applied`. PostgreSQL tests compare the content against a
+full rewrite after inserts, updates, rank shifts, and removals, and cover the
+reader join and the fallback.
 
 ### Band retention floor
 
@@ -924,11 +974,21 @@ scrape because the next floor is recorded below them.
 Between a prune and the next flush, rows only move up: scores are maxima and
 only prune deletes band entries. The window can still move down when entries
 at the top become over-threshold, each flip by one row. The band page fetch
-stages every row with `is_over_threshold = false` (it has no max scores), and
-band extraction applies CHOpt validation later in the same scrape, before
-prune. That is why the floor sits a margin below the window: production
-re-fetches the rows just under the window every scrape, and the margin keeps
-them, so up to `margin` flips per scope cannot reach a skipped row.
+flags over-threshold rows with the scrape's CHOpt max scores and
+`Scraper:OverThresholdMultiplier`, the same check band extraction applies later
+in the same scrape, before prune. The registered-band lookups and the
+max-score recompute use the same max scores and multiplier. Until then the
+fetch and the registered lookups staged every row as valid. Band extraction
+only covers solo rows with band context (about 86,000 per scrape), so most
+over-threshold band entries were never flagged. In scrape `1510`, the first
+fetch with the check flagged about 3,556 more entries, across about 70 songs per
+band type, and left the existing flags unchanged. Those entries no longer count
+toward valid band rankings or current projections. The flush cleared every stored over-threshold flag (about 735 rows per
+scrape, each with a new `last_updated_at`), and extraction set them again. New
+over-threshold entries above the window still move it down. That is why the
+floor sits a margin below the window: production re-fetches the rows just
+under the window every scrape, and the margin keeps them, so up to `margin`
+flips per scope cannot reach a skipped row.
 
 The flush also drops the floor of every scope whose recorded first valid entry
 is staged as over-threshold. An over-threshold recompute after a max-score

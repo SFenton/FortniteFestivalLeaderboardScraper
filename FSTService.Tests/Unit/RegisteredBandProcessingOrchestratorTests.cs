@@ -193,6 +193,49 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
         Assert.Equal(2, status?.LookupsChecked);
     }
 
+    [Theory]
+    [InlineData(1_051, true)]
+    [InlineData(1_050, false)]
+    public async Task DirectLookupStrategy_flags_over_threshold_entries_from_effective_max_scores(
+        int leadMemberScore,
+        bool expectedOverThreshold)
+    {
+        var scraper = Substitute.For<ILeaderboardQuerier>();
+        scraper.LookupBandAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(OverThresholdTestEntry(leadMemberScore));
+        var strategy = new DirectRegisteredBandLookupStrategy(
+            scraper,
+            OverThresholdTestPathDataStore(),
+            Options.Create(new ScraperOptions { OverThresholdMultiplier = 1.05 }));
+        var band = new BandWorkItem
+        {
+            BandId = "band-test",
+            BandType = "Band_Duets",
+            TeamKey = "acct1:acct2",
+            MemberAccountIds = ["acct1", "acct2"],
+        };
+
+        var result = await strategy.FetchAsync(
+            band,
+            new RegisteredBandLookupIntent("song-a", RegisteredBandLookupScope.AllTime, 0, "alltime"),
+            "token",
+            "caller",
+            limiter: null,
+            CancellationToken.None);
+
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal("findteams", entry.Source);
+        Assert.Equal(expectedOverThreshold, entry.IsOverThreshold);
+    }
+
     [Fact]
     public async Task DirectLookupStrategy_sends_exact_noncanonical_window_id()
     {
@@ -652,5 +695,29 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             AdaptiveConcurrencyLimiter? limiter,
             CancellationToken ct) =>
             Task.FromCanceled<RegisteredBandLookupResult>(ct);
+    }
+
+    private static BandLeaderboardEntry OverThresholdTestEntry(int leadMemberScore) => new()
+    {
+        TeamKey = "acct1:acct2",
+        TeamMembers = ["acct1", "acct2"],
+        InstrumentCombo = "0:1",
+        Score = leadMemberScore + 100,
+        MemberStats =
+        [
+            new BandMemberStats { MemberIndex = 0, AccountId = "acct1", InstrumentId = 0, Score = leadMemberScore },
+            new BandMemberStats { MemberIndex = 1, AccountId = "acct2", InstrumentId = 1, Score = 100 },
+        ],
+    };
+
+    private static IPathDataStore OverThresholdTestPathDataStore()
+    {
+        var pathDataStore = Substitute.For<IPathDataStore>();
+        pathDataStore.GetAllMaxScores().Returns(
+            new Dictionary<string, SongMaxScores>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["song-a"] = new() { MaxLeadScore = 1_000, MaxBassScore = 1_000 },
+            });
+        return pathDataStore;
     }
 }

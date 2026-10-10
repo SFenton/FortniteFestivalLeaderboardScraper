@@ -24,6 +24,7 @@ public sealed class MaxScoreMaintenanceDerivedStateService
     private readonly LeaderboardRivalsCalculator _leaderboardRivals;
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<MaxScoreMaintenanceDerivedStateService> _log;
+    private readonly double _overThresholdMultiplier;
 
     public MaxScoreMaintenanceDerivedStateService(
         GlobalLeaderboardPersistence persistence,
@@ -44,6 +45,7 @@ public sealed class MaxScoreMaintenanceDerivedStateService
         _leaderboardRivals = leaderboardRivals;
         _dataSource = dataSource;
         _log = log;
+        _overThresholdMultiplier = options.Value.OverThresholdMultiplier;
     }
 
     public async Task<MaxScoreMaintenanceDerivedStateResult> RebuildAsync(
@@ -100,7 +102,8 @@ public sealed class MaxScoreMaintenanceDerivedStateService
                                     .Select(song => song.SongId)
                                     .ToArray(),
                                 connection,
-                                transaction)),
+                                transaction,
+                                overThresholdMultiplier: _overThresholdMultiplier)),
                 ct: ct);
         var targetSongIds = manifest.Songs
             .Select(song => song.SongId)

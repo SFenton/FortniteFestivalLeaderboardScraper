@@ -696,7 +696,7 @@ Apply:
   frozen-source result. Unaffected instruments are not deleted. It then
   rebuilds composite, solo-family, and combo rankings; recalculates
   target-song band
-  over-threshold flags, refreshes affected band current-projection scopes, and
+  over-threshold flags with `Scraper:OverThresholdMultiplier`, refreshes affected band current-projection scopes, and
   rebuilds dependent band rankings without rank-history snapshots;
 - atomically replaces the complete tier-row set for each affected player-stat
   account, removing stale active-only instruments while preserving unrelated

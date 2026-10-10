@@ -315,7 +315,8 @@ public sealed class ScrapeOrchestrator
             var bandSongIds = scrapeRequests.Select(r => r.SongId).ToList();
             bandTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(passCt);
             bandFetcher = new BandPageFetcher(
-                _globalScraper.Executor, _pool, bandSpool, _progress, _log, accessTokenProvider);
+                _globalScraper.Executor, _pool, bandSpool, _progress, _log, accessTokenProvider,
+                allMaxScores, opts.OverThresholdMultiplier);
             bandTask = bandFetcher.FetchAllAsync(
                 bandSongIds, bandInstruments, accessToken, callerAccountId,
                 opts.MaxPagesPerLeaderboard, bandTimeoutCts.Token);

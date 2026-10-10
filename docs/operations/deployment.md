@@ -200,15 +200,30 @@ plus #155). The worker env additionally sets
 eighth egress-refresh region (see [VPN/proxy pool](vpn-proxy-pool.md)). These
 remain production canaries, not accepted defaults.
 
-Since the scrape `1501` boundary (2026-10-09) production runs master
-`7e038f96`, which includes the performance bundle #186. The worker env adds:
+From the scrape `1501` boundary (2026-10-09) production ran master
+`7e038f96`, which includes the performance bundle #186. From the scrape `1508`
+boundary it ran local bundles of reviewed PRs on master: #190 and #191, then
+#192 (band over-threshold flags) from the `1509` boundary, then #194 and #195
+from the `1510` boundary (`159dbe28`). The worker env adds:
 
 - `Scraper__BandRetentionFloorMode=Enforce`. `Report` ran in scrape `1500`
   and `Enforce` started at the `1500` boundary; see
   [worker: band retention floor](../components/worker.md#band-retention-floor).
 - `Scraper__UseRankHistoryLatestState=true`, since the scrape `1498`
   boundary; see
-  [data storage: rank-history latest rows](../architecture/data-storage.md#rank-history-latest-rows). Check the running image's
+  [data storage: rank-history latest rows](../architecture/data-storage.md#rank-history-latest-rows).
+- `Scraper__BandCurrentProjectionBatchScopesBySourcePair=true`, since the
+  scrape `1508` boundary.
+- Since the scrape `1510` boundary:
+  - `Scraper__BandCurrentProjectionSinglePassStaleSweep=true`;
+  - `Scraper__SoloCurrentProjectionApplyDiff=true`;
+  - `Scraper__BandRetentionFloorMarginRows=10`, after the scrape `1510` margin
+    check reported no row any margin from 0 to 50 would have skipped.
+
+  See [worker: band current projection](../components/worker.md) and
+  [worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
+
+Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
 a newer master build can lack bundle changes that are not merged yet.
 
