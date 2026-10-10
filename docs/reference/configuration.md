@@ -506,6 +506,22 @@ ComputeRankings took 103 minutes. With the combo index described below
 inserts 2.5 minutes), the snapshots 25.3, and ComputeRankings 41.3 minutes, so
 production keeps `2`.
 
+Each per-instrument pass materializes valid current entries into the session
+temp table `_valid_entries` and over-threshold fallbacks into
+`_valid_entries_overrides`. An override counts only when its account still has
+a current row for the song. Its effective rank is the number of other valid
+current entries on that song with a higher score, plus one; the account-ranking
+statement computes it through a `(song_id, score)` index on `_valid_entries`.
+Until 2026-10-10 the overrides table also computed an unused rank by rescanning
+the instrument's whole materialized current state once per override, and the
+account-ranking statement scanned all of `_valid_entries` once per override.
+Temp tables use only `temp_buffers` (8 MB), so every scan went through the
+operating system: in scrape `1521`, Solo_Guitar (423 overrides) spent 321 s
+materializing and 182 s ranking, and ComputeRankings' per-instrument stage took
+807 s. The overrides statement now resolves current state only for songs that
+have overrides (a read-only `EXPLAIN ANALYZE` of the new statement took 2.1 s
+for Solo_Guitar on production data).
+
 The band rank-history schema is ensured once per worker process. Until
 2026-10-08, two band types that started together both ran that DDL, and the
 second one's `CREATE INDEX IF NOT EXISTS` waited for the first band type's whole

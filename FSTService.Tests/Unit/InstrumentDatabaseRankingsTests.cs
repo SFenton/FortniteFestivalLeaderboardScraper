@@ -1035,4 +1035,123 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Assert.NotNull(history[0].RawWeightedRating);
         Assert.NotNull(history[0].RawSkillRating);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // Materialized current-state rankings with overrides
+    // ═══════════════════════════════════════════════════════════
+
+    private void SeedOverrideRankingFixture()
+    {
+        // song1 and song2 each have an over-threshold top entry with a valid
+        // fallback; song3 has no overrides. Max score 2000 → threshold 2100.
+        Db.UpsertEntries("song1", [
+            MakeEntry("over1", 5000, rank: 1, fc: true),
+            MakeEntry("a", 2000, rank: 2),
+            MakeEntry("b", 1900, rank: 3, fc: true),
+            MakeEntry("c", 1700, rank: 4),
+            MakeEntry("d", 1500, rank: 5),
+        ]);
+        Db.UpsertEntries("song2", [
+            MakeEntry("over2", 9000, rank: 1),
+            MakeEntry("over1", 8000, rank: 2),
+            MakeEntry("a", 1800, rank: 3),
+            MakeEntry("c", 1750, rank: 4, fc: true),
+        ]);
+        Db.UpsertEntries("song3", [
+            MakeEntry("b", 1950, rank: 1),
+            MakeEntry("d", 1940, rank: 2),
+            MakeEntry("a", 1200, rank: 3),
+        ]);
+        Db.RecomputeAllRanks();
+
+        var maxScores = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["song1"] = 2000,
+            ["song2"] = 2000,
+            ["song3"] = 2000,
+        };
+        Db.ComputeSongStats(maxScores);
+    }
+
+    private List<string> ReadAccountRankingRows()
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT account_id, songs_played, total_score, raw_skill_rating, weighted_rating,
+                   adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank,
+                   max_score_percent_rank, best_rank, avg_rank, full_combo_count
+            FROM account_rankings
+            WHERE instrument = @instrument
+            ORDER BY account_id";
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        var rows = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var values = new object[reader.FieldCount];
+            reader.GetValues(values);
+            rows.Add(string.Join("|", values.Select(value => value switch
+            {
+                double d => d.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+            })));
+        }
+
+        return rows;
+    }
+
+    private int ComputeMaterializedAccountRankings(int totalChartedSongs)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        Db.MaterializeCurrentStateValidEntries(conn, 1.05);
+        return Db.ComputeAccountRankingsFromMaterialized(conn, totalChartedSongs, 50, 0.5, 1.05);
+    }
+
+    [Fact]
+    public void ComputeAccountRankingsFromMaterialized_WithOverrides_MatchesDirectComputation()
+    {
+        SeedOverrideRankingFixture();
+        Db.PopulateValidScoreOverrides([
+            ("song1", "over1", 1950, 91, true, 5),
+            ("song2", "over2", 1790, 88, false, 4),
+            ("song2", "over1", 2050, 93, false, 5),
+        ]);
+
+        Assert.Equal(6, Db.ComputeAccountRankings(totalChartedSongs: 3));
+        var direct = ReadAccountRankingRows();
+
+        Assert.Equal(6, ComputeMaterializedAccountRankings(totalChartedSongs: 3));
+        var materialized = ReadAccountRankingRows();
+
+        Assert.Equal(direct, materialized);
+
+        // over1's song1 fallback (1950) ranks behind only a (2000): rank 2.
+        // over1's song2 fallback (2050) is the best valid song2 score: rank 1.
+        var over1 = Db.GetAccountRanking("over1");
+        Assert.NotNull(over1);
+        Assert.Equal(2, over1.SongsPlayed);
+        Assert.Equal(1950 + 2050, over1.TotalScore);
+        Assert.Equal(1, over1.BestRank);
+        Assert.Equal(1.5, over1.AvgRank, 6);
+    }
+
+    [Fact]
+    public void ComputeAccountRankingsFromMaterialized_DropsOverrideWithoutCurrentRow()
+    {
+        SeedOverrideRankingFixture();
+        // "ghost" has no current song1 row, so its override must not count.
+        Db.PopulateValidScoreOverrides([
+            ("song1", "over1", 1950, 91, true, 5),
+            ("song1", "ghost", 1990, 90, false, 5),
+        ]);
+
+        ComputeMaterializedAccountRankings(totalChartedSongs: 3);
+
+        Assert.Null(Db.GetAccountRanking("ghost"));
+        var over1 = Db.GetAccountRanking("over1");
+        Assert.NotNull(over1);
+        Assert.Equal(1, over1.SongsPlayed);
+        Assert.Equal(2, over1.BestRank);
+    }
 }
