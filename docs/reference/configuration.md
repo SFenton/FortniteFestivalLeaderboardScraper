@@ -505,6 +505,12 @@ ComputeRankings took 103 minutes. With the combo index described below
 inserts 2.5 minutes), the snapshots 25.3, and ComputeRankings 41.3 minutes, so
 production keeps `2`.
 
+The snapshot writers take the longest snapshots first: composite, then the
+instruments by ranked account count, which tracks their snapshot time. Until
+2026-10-10 composite ran last, so with two writers its snapshot of about 270
+seconds ran alone at the end. In scrapes `1509` to `1513` the snapshots took
+773 to 834 seconds against about 726 seconds of work per writer.
+
 The band rank-history schema is ensured once per worker process. Until
 2026-10-08, two band types that started together both ran that DDL, and the
 second one's `CREATE INDEX IF NOT EXISTS` waited for the first band type's whole
