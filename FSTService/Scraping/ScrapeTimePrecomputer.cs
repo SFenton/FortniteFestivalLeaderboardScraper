@@ -413,26 +413,26 @@ public sealed class ScrapeTimePrecomputer
         }
         else
         {
-            await PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
-                tiers, bandScoresCache, maintenanceScopes, ct);
-            PrecomputeLeaderboardAll(
+            await TimePrecomputePhaseAsync("players", () => PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
+                tiers, bandScoresCache, maintenanceScopes, ct));
+            TimePrecomputePhase("leaderboard_all", () => PrecomputeLeaderboardAll(
                 allMaxScores,
                 unfilteredPopulation,
                 instrumentKeys,
                 showLeaderboardEntryTotals,
                 leewayMetadata.RankOffsetsByKey,
-                maintenanceScopes);
-            PrecomputeSongBandLeaderboardsAll(
+                maintenanceScopes));
+            TimePrecomputePhase("song_band_leaderboards", () => PrecomputeSongBandLeaderboardsAll(
                 showLeaderboardEntryTotals,
-                maintenanceCatalogSongIds);
-            await PrecomputePlayerSubResourcesAsync(
+                maintenanceCatalogSongIds));
+            await TimePrecomputePhaseAsync("player_sub_resources", () => PrecomputePlayerSubResourcesAsync(
                 registeredIds,
                 instrumentKeys,
                 totalSongsOverride,
-                ct);
-            PrecomputeRankingsPages(instrumentKeys);
-            PrecomputeNeighborhoods(registeredIds, instrumentKeys);
-            PrecomputeFirstSeen();
+                ct));
+            TimePrecomputePhase("rankings_pages", () => PrecomputeRankingsPages(instrumentKeys));
+            TimePrecomputePhase("neighborhoods", () => PrecomputeNeighborhoods(registeredIds, instrumentKeys));
+            TimePrecomputePhase("first_seen", PrecomputeFirstSeen);
         }
 
         // ── Signal channel completion and wait for drain to disk ──
@@ -2366,6 +2366,26 @@ public sealed class ScrapeTimePrecomputer
     // ═══════════════════════════════════════════════════════════════
     // Phase 7: Static Data (firstseen)
     // ═══════════════════════════════════════════════════════════════
+
+    private void TimePrecomputePhase(string phase, Action action)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        action();
+        LogPrecomputePhase(phase, stopwatch.Elapsed);
+    }
+
+    private async Task TimePrecomputePhaseAsync(string phase, Func<Task> action)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        await action();
+        LogPrecomputePhase(phase, stopwatch.Elapsed);
+    }
+
+    private void LogPrecomputePhase(string phase, TimeSpan elapsed) =>
+        _log.LogInformation(
+            "[Precompute.Phase] phase={Phase} elapsed_ms={ElapsedMs:F0}",
+            phase,
+            elapsed.TotalMilliseconds);
 
     private void PrecomputeFirstSeen()
     {
