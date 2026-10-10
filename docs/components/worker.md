@@ -979,6 +979,16 @@ partition even when the indexes exist. That cancelled any autovacuum on those
 partitions, which happened every scrape. The worker's single builder now runs
 that DDL once per process.
 
+Current-scope listing, stale-scope selection, and orphan checks and pruning
+start from the current scope pairs: finalized snapshot states, overlay pairs and, without
+`Features:UseSnapshotOverlayWorkerReaders`, legacy `leaderboard_entries` pairs
+that have no finalized snapshot. Those legacy pairs used to be found by reading
+every legacy row: about 41 million rows, about 29 seconds per call and five
+calls in scrape `1523`, to find no missing pair. They now come from a loose
+index scan, one primary-key probe per distinct song in each instrument
+partition. On production data it returned the same 6,533 legacy pairs in about
+60 ms.
+
 ### Band retention floor
 
 Band prune keeps, per song and band type, the over-threshold entries ranked
