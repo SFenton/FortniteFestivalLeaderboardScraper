@@ -638,7 +638,7 @@ holds; that resolution dominated precompute database time in scrape `1457`.
 
 When precompute runs its phases sequentially (the default,
 `Scraper:RunPrecomputePhasesInParallel=false`), it logs one
-`[Precompute.Phase] phase=<name> elapsed_ms=<ms> staged_records=<n>` line per
+`[Precompute.Phase] phase=<name> elapsed_ms=<ms>` line per
 phase: `players`, `leaderboard_all`, `song_band_leaderboards`,
 `player_sub_resources`, `rankings_pages`, `neighborhoods`, and `first_seen`.
 Leeway metadata is logged separately before them.
