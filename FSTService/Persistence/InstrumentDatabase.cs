@@ -4350,54 +4350,79 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 """;
         }
 
+        // Legacy rows (songs without a finalized snapshot) and active-snapshot rows
+        // are disjoint and each unique per (song_id, account_id); overlay rows are
+        // unique per (song_id, instrument, account_id) and take precedence. So
+        // resolving needs only an anti-join against the small overlay set, not a
+        // DISTINCT ON sort of every row. Legacy songs come from a loose index scan
+        // so a legacy partition is read only for songs that still need it.
         var allowLegacyRows = UseSnapshotOverlayWorkerReaders ? "FALSE" : "TRUE";
         return
         $"""
-            WITH {BuildSelectedSourceCtes(filterSong: false)},
-            base_rows AS (
-                SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars,
-                       le.rank, le.api_rank, le.first_seen_at, le.end_time,
-                       1 AS origin_precedence,
-                       0 AS source_priority
-                FROM leaderboard_entries le
-                WHERE le.instrument = @instrument
-                  AND {allowLegacyRows}
+            WITH RECURSIVE {BuildSelectedSourceCtes(filterSong: false)},
+            legacy_song_probe AS (
+                SELECT (
+                    SELECT min(le.song_id)
+                    FROM leaderboard_entries le
+                    WHERE le.instrument = @instrument
+                ) AS song_id
+                WHERE {allowLegacyRows}
+                UNION ALL
+                SELECT (
+                    SELECT min(le.song_id)
+                    FROM leaderboard_entries le
+                    WHERE le.instrument = @instrument
+                      AND le.song_id > probe.song_id
+                )
+                FROM legacy_song_probe probe
+                WHERE probe.song_id IS NOT NULL
+            ),
+            legacy_songs AS (
+                SELECT probe.song_id
+                FROM legacy_song_probe probe
+                WHERE probe.song_id IS NOT NULL
                   AND NOT EXISTS (
                       SELECT 1
                       FROM selected_sources selected
-                      WHERE selected.song_id = le.song_id
+                      WHERE selected.song_id = probe.song_id
                   )
+            ),
+            base_rows AS (
+                SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars,
+                       le.rank, le.api_rank, le.first_seen_at, le.end_time
+                FROM legacy_songs legacy
+                JOIN leaderboard_entries le
+                  ON le.instrument = @instrument
+                 AND le.song_id = legacy.song_id
                 UNION ALL
                 SELECT snapshot.song_id, snapshot.account_id, snapshot.score, snapshot.accuracy, snapshot.is_full_combo, snapshot.stars,
-                       snapshot.rank, snapshot.api_rank, snapshot.first_seen_at, snapshot.end_time,
-                       1 AS origin_precedence,
-                       0 AS source_priority
+                       snapshot.rank, snapshot.api_rank, snapshot.first_seen_at, snapshot.end_time
                 FROM {LeaderboardEntriesSnapshotTable} snapshot
                 JOIN selected_sources selected
                   ON selected.song_id = snapshot.song_id
                  AND selected.source_kind = 'snapshot'
                  AND selected.source_snapshot_id = snapshot.snapshot_id
                 WHERE snapshot.instrument = @instrument
-                UNION ALL
+            ),
+            overlay_rows AS (
                 SELECT overlay.song_id, overlay.account_id, overlay.score, overlay.accuracy, overlay.is_full_combo, overlay.stars,
-                       overlay.rank, overlay.api_rank, overlay.first_seen_at, overlay.end_time,
-                       0 AS origin_precedence,
-                       overlay.source_priority
+                       overlay.rank, overlay.api_rank, overlay.first_seen_at, overlay.end_time
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
-                  AND (
-                      TRUE
-                      OR EXISTS (
-                          SELECT 1 FROM selected_sources selected
-                          WHERE selected.song_id = overlay.song_id
-                      )
-                  )
             ),
             resolved_rows AS (
-                SELECT DISTINCT ON (song_id, account_id)
-                    song_id, account_id, score, accuracy, is_full_combo, stars, rank, api_rank, first_seen_at, end_time
-                FROM base_rows
-                ORDER BY song_id, account_id, origin_precedence ASC, source_priority DESC
+                SELECT song_id, account_id, score, accuracy, is_full_combo, stars, rank, api_rank, first_seen_at, end_time
+                FROM overlay_rows
+                UNION ALL
+                SELECT base.song_id, base.account_id, base.score, base.accuracy, base.is_full_combo, base.stars,
+                       base.rank, base.api_rank, base.first_seen_at, base.end_time
+                FROM base_rows base
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM overlay_rows overlay
+                    WHERE overlay.song_id = base.song_id
+                      AND overlay.account_id = base.account_id
+                )
             )
             SELECT song_id, account_id, score, accuracy, is_full_combo, stars, rank, api_rank, first_seen_at, end_time
             FROM resolved_rows
