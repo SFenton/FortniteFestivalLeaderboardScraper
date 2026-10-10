@@ -3422,6 +3422,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return GetRankedAccountCountWithBackfill(conn);
     }
 
+    public int? GetCachedRankedAccountCount()
+    {
+        using var conn = _ds.OpenConnection();
+        return GetCachedRankedAccountCount(conn);
+    }
+
     public int GetTotalChartedSongs()
     {
         using var conn = _ds.OpenConnection();
@@ -4642,7 +4648,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.CommandTimeout = 0;
             c.CommandText = @"
                 CREATE INDEX ON _valid_entries (account_id);
-                CREATE INDEX ON _valid_entries (max_score, score) WHERE max_score IS NOT NULL AND max_score > 0";
+                CREATE INDEX ON _valid_entries (max_score, score) WHERE max_score IS NOT NULL AND max_score > 0;
+                CREATE INDEX ON _valid_entries (song_id, score)";
             c.ExecuteNonQuery();
         }
 
@@ -4771,13 +4778,31 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.CommandTimeout = 0;
             c.CommandText = @"
                 CREATE INDEX ON _valid_entries (account_id);
-                CREATE INDEX ON _valid_entries (max_score, score) WHERE max_score IS NOT NULL AND max_score > 0";
+                CREATE INDEX ON _valid_entries (max_score, score) WHERE max_score IS NOT NULL AND max_score > 0;
+                CREATE INDEX ON _valid_entries (song_id, score)";
             c.ExecuteNonQuery();
+        }
+
+        // Override ranks are computed later against _valid_entries (see
+        // ComputeAccountRankingsFromMaterialized). Here we only keep overrides
+        // whose account still has a current row, and the constant song filter
+        // lets the planner resolve current state for just those songs instead
+        // of the whole instrument.
+        var overrideSongIds = new List<string>();
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = transaction;
+            c.CommandText = "SELECT DISTINCT song_id FROM valid_score_overrides WHERE instrument = @instrument";
+            c.Parameters.AddWithValue("instrument", Instrument);
+            using var reader = c.ExecuteReader();
+            while (reader.Read())
+                overrideSongIds.Add(reader.GetString(0));
         }
 
         using (var c = conn.CreateCommand())
         {
             c.Transaction = transaction;
+            c.CommandTimeout = 0;
             c.CommandText = $"""
                 CREATE TEMP TABLE _valid_entries_overrides AS
                 WITH current_rows AS (
@@ -4787,25 +4812,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        COALESCE(vso.accuracy, 0) AS accuracy,
                        COALESCE(vso.is_full_combo, false) AS is_full_combo,
                        COALESCE(vso.stars, 0) AS stars,
-                       (
-                           SELECT COUNT(*) + 1
-                           FROM current_rows current_rows2
-                           JOIN song_stats ss2 ON ss2.song_id = current_rows2.song_id AND ss2.instrument = @instrument
-                           WHERE current_rows2.song_id = vso.song_id
-                             AND current_rows2.score > vso.score
-                             AND current_rows2.score <= COALESCE(FLOOR(ss2.max_score * @threshold)::INTEGER, current_rows2.score + 1)
-                             AND current_rows2.account_id != vso.account_id
-                       ) AS effective_rank,
                        ss.entry_count, ss.log_weight, ss.max_score
                 FROM valid_score_overrides vso
                 JOIN current_rows current_member ON current_member.song_id = vso.song_id AND current_member.account_id = vso.account_id
                 JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument
                 WHERE vso.instrument = @instrument
+                  AND current_member.song_id = ANY(@overrideSongIds)
                   AND (NOT @filterCurrentCatalog OR vso.song_id = ANY(@currentCatalogSongIds))
                   AND ss.entry_count > 0
                 """;
             c.Parameters.AddWithValue("instrument", Instrument);
-            c.Parameters.AddWithValue("threshold", baseThreshold);
+            c.Parameters.Add(
+                "overrideSongIds",
+                NpgsqlDbType.Array | NpgsqlDbType.Text).Value =
+                overrideSongIds.ToArray();
             c.Parameters.AddWithValue(
                 "filterCurrentCatalog",
                 filterCurrentCatalog);

@@ -1398,6 +1398,36 @@ public sealed class RankingsCalculator
         }
     }
 
+    /// <summary>
+    /// Orders the history snapshots longest first so the parallel slots finish
+    /// together instead of leaving one long snapshot running alone at the end.
+    /// Composite (one row per ranked account across instruments) goes first, then
+    /// instruments by ranked account count, which tracks their snapshot time.
+    /// </summary>
+    internal static IReadOnlyList<(string? Instrument, bool IsComposite)> OrderSnapshotItems(
+        IReadOnlyList<string> instruments,
+        Func<string, long> rankedAccountCount) =>
+        instruments
+            .Select((instrument, index) => (Instrument: instrument, Index: index, Count: rankedAccountCount(instrument)))
+            .OrderByDescending(static item => item.Count)
+            .ThenBy(static item => item.Index)
+            .Select(static item => (Instrument: (string?)item.Instrument, IsComposite: false))
+            .Prepend((Instrument: (string?)null, IsComposite: true))
+            .ToArray();
+
+    private long RankedAccountCountOrZero(string instrument)
+    {
+        try
+        {
+            return _persistence.GetOrCreateInstrumentDb(instrument).GetCachedRankedAccountCount() ?? 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "Ranked account count unavailable for {Instrument}; ordering its snapshot last.", instrument);
+            return 0;
+        }
+    }
+
     private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct, string? progressBranchId = null)
     {
         _progress.SetSubOperation("rank_history_snapshots");
@@ -1407,8 +1437,13 @@ public sealed class RankingsCalculator
             1,
             instruments.Count + 1);
 
-        var snapshotItems = instruments.Select(instrument => (Instrument: (string?)instrument, IsComposite: false))
-            .Append((Instrument: (string?)null, IsComposite: true));
+        var snapshotItems = OrderSnapshotItems(
+            instruments,
+            instrument =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return RankedAccountCountOrZero(instrument);
+            });
 
         await Parallel.ForEachAsync(snapshotItems,
             new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },

@@ -289,11 +289,15 @@ invalid/non-positive values prevent startup.
 | `Scraper:BandCurrentProjectionPublishParallelism` | `0` | When positive, publish an incremental refresh one song per transaction with up to this many at once and clean only unsettled scopes; `0` keeps one publish transaction and a whole-projection candidate scan; values above `16` are clamped |
 | `Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes` | `0` | When positive, also rebuild up to this many stale scopes outside the scrape's impacted set |
 | `Scraper:BandCurrentProjectionSinglePassStaleSweep` | `false` | Derive the stale sweep's candidates and its unchanged-scope selection from one scan of the band entries instead of two; same selection |
+| `Scraper:BandCurrentProjectionStaleSweepChangedPairsOnly` | `false` | With the single-pass sweep, scan only pairs with a band entry updated since 15 minutes before the last recorded sweep, plus impacted, unready and unpublished scopes' pairs; see [worker](../components/worker.md) |
+| `Scraper:BandCurrentProjectionStaleSweepFullIntervalHours` | `24` | Longest time between full stale sweeps with `BandCurrentProjectionStaleSweepChangedPairsOnly` |
 | `Scraper:BandSearchProjectionParallelBandTypes` | `false` | Refresh the band search projection one band type per concurrent transaction |
 | `Scraper:BandSpoolFlushMaxParallelBandTypes` | `1` | How many band types the post-fetch band spool flush writes at once; clamped to the number of band types |
 | `Scraper:BandRetentionFloorMode` | `Off` | Band retention floor for the post-fetch band flush. `Report` records staged new rows that rank below the floor band prune last recorded for their scope, and the next prune counts how many of them it would keep; `Enforce` also skips those rows; `Off` does neither. See [worker: band retention floor](../components/worker.md#band-retention-floor) |
 | `Scraper:OverThresholdMultiplier` | `1.05` | Solo deep-scrape trigger (`CHOptMax × multiplier`) and the band over-threshold flag: a band entry is over threshold when any member's score exceeds that member's instrument CHOpt max times this multiplier. The band page fetch and band extraction both apply it |
 | `Scraper:BandRetentionFloorApplyToExtraction` | `false` | Apply the scrape's band retention floor (mode and filter state) to post-scrape band extraction, so extraction does not insert rows prune would delete |
+| `Scraper:BandPruneChangedScopesOnly` | `false` | Band prune ranks and prunes only scopes with a band entry inserted or updated since 15 minutes before the previous prune; see [worker: band retention floor](../components/worker.md#band-retention-floor) |
+| `Scraper:BandPruneFullIntervalHours` | `24` | With `BandPruneChangedScopesOnly`, the longest time between full band prunes |
 | `Scraper:BandRetentionFloorMarginRows` | `100` | Rows between band prune's last kept window row and the recorded retention floor; absorbs over-threshold flips at the top of a leaderboard between the flush and prune |
 
 The Compose form is
@@ -505,6 +509,28 @@ ComputeRankings took 103 minutes. With the combo index described below
 (scrape `1462`, still `2`), band team rankings took 12.5 minutes (Band_Quad's
 inserts 2.5 minutes), the snapshots 25.3, and ComputeRankings 41.3 minutes, so
 production keeps `2`.
+
+The snapshot writers take the longest snapshots first: composite, then the
+instruments by ranked account count, which tracks their snapshot time. Until
+2026-10-10 composite ran last, so with two writers its snapshot of about 270
+seconds ran alone at the end. In scrapes `1509` to `1513` the snapshots took
+773 to 834 seconds against about 726 seconds of work per writer.
+
+Each per-instrument pass materializes valid current entries into the session
+temp table `_valid_entries` and over-threshold fallbacks into
+`_valid_entries_overrides`. An override counts only when its account still has
+a current row for the song. Its effective rank is the number of other valid
+current entries on that song with a higher score, plus one; the account-ranking
+statement computes it through a `(song_id, score)` index on `_valid_entries`.
+Until 2026-10-10 the overrides table also computed an unused rank by rescanning
+the instrument's whole materialized current state once per override, and the
+account-ranking statement scanned all of `_valid_entries` once per override.
+Temp tables use only `temp_buffers` (8 MB), so every scan went through the
+operating system: in scrape `1521`, Solo_Guitar (423 overrides) spent 321 s
+materializing and 182 s ranking, and ComputeRankings' per-instrument stage took
+807 s. The overrides statement now resolves current state only for songs that
+have overrides (a read-only `EXPLAIN ANALYZE` of the new statement took 2.1 s
+for Solo_Guitar on production data).
 
 The band rank-history schema is ensured once per worker process. Until
 2026-10-08, two band types that started together both ran that DDL, and the

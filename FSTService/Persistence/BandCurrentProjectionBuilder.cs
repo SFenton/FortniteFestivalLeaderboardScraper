@@ -769,24 +769,71 @@ public sealed class BandCurrentProjectionBuilder
     /// in a temporary table; the candidate keys come from that table and the
     /// unchanged-scope selection reads it instead of scanning the entries again.
     /// </summary>
+    /// <param name="sweepScope">
+    /// When <see cref="BandCurrentProjectionSweepScopeOptions.ChangedPairsOnly"/>
+    /// is set and a recent sweep is recorded, only (song, band type) pairs that
+    /// can need a rebuild are scanned: pairs with a band entry updated since
+    /// shortly before the last recorded sweep, the impacted scopes' pairs, and
+    /// pairs with a scope that is not ready or not published. Every other scope
+    /// was current after that sweep's refresh and its source has not changed.
+    /// Record the sweep with <see cref="RecordStaleSweepAsync"/> only after the
+    /// selected scopes were refreshed.
+    /// </param>
     public async Task<BandCurrentProjectionSweepSelection> SelectImpactedAndSweptStaleScopesAsync(
         IReadOnlyCollection<BandCurrentProjectionScopeKey> impactedScopes,
         int maxStaleScopes,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        BandCurrentProjectionSweepScopeOptions? sweepScope = null)
     {
         var impacted = impactedScopes
             .Select(static scope => TryNormalizeScope(scope, out var key) ? key : null)
             .OfType<BandCurrentProjectionScopeKey>()
             .ToHashSet();
 
+        if (sweepScope is { ChangedPairsOnly: true })
+            await EnsureSweepStateSchemaAsync(ct);
+
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
+
+        var (sweepStartedAt, changedSince) = await ReadSweepWindowAsync(conn, tx, sweepScope, ct);
+        var partial = changedSince is not null;
+        if (partial)
+        {
+            await using (var pairs = conn.CreateCommand())
+            {
+                pairs.Transaction = tx;
+                pairs.CommandTimeout = 0;
+                pairs.CommandText = $"""
+                    CREATE TEMP TABLE _band_sweep_pairs (
+                        song_id TEXT NOT NULL,
+                        band_type TEXT NOT NULL,
+                        PRIMARY KEY (song_id, band_type)
+                    ) ON COMMIT DROP;
+                    INSERT INTO _band_sweep_pairs (song_id, band_type)
+                    SELECT song_id, band_type FROM band_entries WHERE last_updated_at > @changedSince
+                    UNION
+                    SELECT song_id, band_type FROM unnest(@impactedSongIds::TEXT[], @impactedBandTypes::TEXT[]) AS i(song_id, band_type)
+                    UNION
+                    SELECT song_id, band_type FROM {ScopeTable}
+                    WHERE status <> 'ready' OR projection_generation IS DISTINCT FROM published_generation;
+                    ANALYZE _band_sweep_pairs;
+                    """;
+                pairs.Parameters.AddWithValue("changedSince", changedSince!.Value);
+                pairs.Parameters.AddWithValue("impactedSongIds", impacted.Select(static scope => scope.SongId).ToArray());
+                pairs.Parameters.AddWithValue("impactedBandTypes", impacted.Select(static scope => scope.BandType).ToArray());
+                await pairs.ExecuteNonQueryAsync(ct);
+            }
+        }
 
         await using (var stats = conn.CreateCommand())
         {
             stats.Transaction = tx;
             stats.CommandTimeout = 0;
-            stats.CommandText = AllSourceScopeStatsSql;
+            stats.CommandText = AllSourceScopeStatsSql.Replace(
+                "__SWEEP_PAIR_FILTER__",
+                partial ? SweepPairFilterSql : string.Empty,
+                StringComparison.Ordinal);
             await stats.ExecuteNonQueryAsync(ct);
         }
 
@@ -795,11 +842,19 @@ public sealed class BandCurrentProjectionBuilder
         {
             keys.Transaction = tx;
             keys.CommandTimeout = 0;
-            keys.CommandText = $"""
-                SELECT song_id, band_type, ranking_scope, scope_combo_id FROM _band_source_scope_stats
-                UNION ALL
-                SELECT song_id, band_type, ranking_scope, scope_combo_id FROM {ScopeTable}
-                """;
+            keys.CommandText = partial
+                ? $"""
+                    SELECT song_id, band_type, ranking_scope, scope_combo_id FROM _band_source_scope_stats
+                    UNION ALL
+                    SELECT scope.song_id, scope.band_type, scope.ranking_scope, scope.scope_combo_id
+                    FROM {ScopeTable} scope
+                    JOIN _band_sweep_pairs pair ON pair.song_id = scope.song_id AND pair.band_type = scope.band_type
+                    """
+                : $"""
+                    SELECT song_id, band_type, ranking_scope, scope_combo_id FROM _band_source_scope_stats
+                    UNION ALL
+                    SELECT song_id, band_type, ranking_scope, scope_combo_id FROM {ScopeTable}
+                    """;
             await using var reader = await keys.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
             {
@@ -818,7 +873,12 @@ public sealed class BandCurrentProjectionBuilder
         if (requested.Length == 0)
         {
             await tx.CommitAsync(ct);
-            return new BandCurrentProjectionSweepSelection([], [], 0);
+            return new BandCurrentProjectionSweepSelection([], [], 0)
+            {
+                SweepStartedAt = sweepStartedAt,
+                FullSweep = !partial,
+                AllStaleScopesSelected = true,
+            };
         }
 
         await CopyRequestedScopesAsync(conn, tx, requested, ct);
@@ -852,11 +912,96 @@ public sealed class BandCurrentProjectionBuilder
         await tx.CommitAsync(ct);
 
         var impactedSelected = selected.Where(impacted.Contains).ToArray();
-        var staleSelected = selected.Where(scope => !impacted.Contains(scope));
+        var staleSelected = selected.Where(scope => !impacted.Contains(scope)).ToArray();
         return new BandCurrentProjectionSweepSelection(
             impactedSelected,
             maxStaleScopes > 0 ? staleSelected.Take(maxStaleScopes).ToArray() : [],
-            candidates.Length);
+            candidates.Length)
+        {
+            SweepStartedAt = sweepStartedAt,
+            FullSweep = !partial,
+            // Stale scopes beyond the cap stay stale, so the next sweep must
+            // still look at them.
+            AllStaleScopesSelected = maxStaleScopes > 0 && staleSelected.Length <= maxStaleScopes,
+        };
+    }
+
+    private const string SweepPairFilterSql = """
+        AND EXISTS (
+            SELECT 1 FROM _band_sweep_pairs pair
+            WHERE pair.song_id = be.song_id AND pair.band_type = be.band_type)
+        """;
+
+    private const string SweepStateTable = "band_current_projection_sweep_state";
+    private int _sweepStateEnsured;
+
+    private async Task EnsureSweepStateSchemaAsync(CancellationToken ct)
+    {
+        if (Volatile.Read(ref _sweepStateEnsured) == 1)
+            return;
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            CREATE TABLE IF NOT EXISTS {SweepStateTable} (
+                id                 BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+                last_sweep_at      TIMESTAMPTZ NOT NULL,
+                last_full_sweep_at TIMESTAMPTZ NOT NULL
+            )
+            """;
+        await cmd.ExecuteNonQueryAsync(ct);
+        Volatile.Write(ref _sweepStateEnsured, 1);
+    }
+
+    private static async Task<(DateTime StartedAt, DateTime? ChangedSince)> ReadSweepWindowAsync(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandCurrentProjectionSweepScopeOptions? sweepScope,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sweepScope is { ChangedPairsOnly: true }
+            ? $"SELECT now(), s.last_sweep_at, s.last_full_sweep_at FROM (SELECT 1) one LEFT JOIN {SweepStateTable} s ON s.id"
+            : "SELECT now(), NULL::TIMESTAMPTZ, NULL::TIMESTAMPTZ";
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        var now = reader.GetFieldValue<DateTime>(0);
+        if (sweepScope is not { ChangedPairsOnly: true } || reader.IsDBNull(1))
+            return (now, null);
+
+        var lastSweepAt = reader.GetFieldValue<DateTime>(1);
+        var lastFullSweepAt = reader.GetFieldValue<DateTime>(2);
+        if (now - lastFullSweepAt >= sweepScope.FullSweepInterval)
+            return (now, null);
+        return (now, lastSweepAt - sweepScope.ChangeSafetyMargin);
+    }
+
+    /// <summary>
+    /// Records a completed sweep after its selected scopes were refreshed. A
+    /// sweep that left stale scopes behind (cap reached) is not recorded, so the
+    /// next sweep looks at the same changes again.
+    /// </summary>
+    public async Task RecordStaleSweepAsync(BandCurrentProjectionSweepSelection selection, CancellationToken ct = default)
+    {
+        if (selection.SweepStartedAt is null || !selection.AllStaleScopesSelected)
+            return;
+
+        await EnsureSweepStateSchemaAsync(ct);
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO {SweepStateTable} (id, last_sweep_at, last_full_sweep_at)
+            VALUES (TRUE, @startedAt, @startedAt)
+            ON CONFLICT (id) DO UPDATE SET
+                last_sweep_at = GREATEST({SweepStateTable}.last_sweep_at, EXCLUDED.last_sweep_at),
+                last_full_sweep_at = CASE WHEN @full
+                    THEN GREATEST({SweepStateTable}.last_full_sweep_at, EXCLUDED.last_full_sweep_at)
+                    ELSE {SweepStateTable}.last_full_sweep_at END
+            """;
+        cmd.Parameters.AddWithValue("startedAt", selection.SweepStartedAt.Value);
+        cmd.Parameters.AddWithValue("full", selection.FullSweep);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     // Per source scope: the rows a rebuild would project (distinct teams) and
@@ -873,6 +1018,7 @@ public sealed class BandCurrentProjectionBuilder
             FROM band_entries be
             {BandComboMapJoinSql}
             WHERE NOT be.is_over_threshold
+            __SWEEP_PAIR_FILTER__
         )
         SELECT song_id,
                band_type,
@@ -3118,7 +3264,28 @@ public sealed record BandCurrentProjectionScopeKey(
 public sealed record BandCurrentProjectionSweepSelection(
     IReadOnlyList<BandCurrentProjectionScopeKey> ImpactedScopes,
     IReadOnlyList<BandCurrentProjectionScopeKey> StaleScopes,
-    int SweepCandidateCount);
+    int SweepCandidateCount)
+{
+    /// <summary>The sweep transaction's start time, for <c>RecordStaleSweepAsync</c>.</summary>
+    public DateTime? SweepStartedAt { get; init; }
+
+    /// <summary>Whether the sweep scanned every (song, band type) pair.</summary>
+    public bool FullSweep { get; init; } = true;
+
+    /// <summary>Whether every stale scope found fit under the cap.</summary>
+    public bool AllStaleScopesSelected { get; init; }
+}
+
+/// <summary>
+/// Changed-pair stale sweep: scan only pairs with a band entry updated since
+/// <see cref="ChangeSafetyMargin"/> before the last recorded sweep (plus impacted,
+/// unready and unpublished scopes' pairs), with a full sweep at least every
+/// <see cref="FullSweepInterval"/>.
+/// </summary>
+public sealed record BandCurrentProjectionSweepScopeOptions(
+    bool ChangedPairsOnly,
+    TimeSpan FullSweepInterval,
+    TimeSpan ChangeSafetyMargin);
 
 public sealed record BandCurrentProjectionScopeSummary(
     string SongId,

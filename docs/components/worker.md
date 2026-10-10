@@ -892,6 +892,29 @@ ids from 0 to 10, plus the empty combo. That replaces about 20 million
 evaluations of the combo-id expression. Any other value falls back to the
 expression, and a PostgreSQL test checks that the map and the expression agree.
 
+Even in one pass, the sweep reads every band entry (2.4 minutes in scrapes
+`1511` to `1520`), although few pairs change between scrapes: in scrape `1520`
+about 470 of 2,196 (song, band type) pairs had an updated band entry.
+`Scraper:BandCurrentProjectionStaleSweepChangedPairsOnly` (default `false`) scans
+only pairs that can need a rebuild:
+
+- pairs with a band entry whose `last_updated_at` is later than 15 minutes
+  before the last recorded sweep;
+- the impacted scopes' pairs, which include prune's deletions, the only way
+  rows leave `band_entries`;
+- pairs with a scope that is not `ready` or whose candidate is not published.
+
+Every other scope was current after the last sweep's refresh, and its source
+has not changed. The worker records a sweep in
+`band_current_projection_sweep_state` only after its selected scopes were
+refreshed, and only if every stale scope fitted under the cap. A crash, or
+stale scopes left over by the cap, therefore leaves the next sweep looking at
+the same changes. A full sweep runs without a recorded sweep and at least every
+`Scraper:BandCurrentProjectionStaleSweepFullIntervalHours` (default 24), which
+also catches drift with no row change. PostgreSQL tests match the full sweep's
+selection after changes and an unready scope, and cover the cap and the
+interval.
+
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
 nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and
@@ -1070,6 +1093,36 @@ a pass whose band flush was skipped (for example after a band fetch timeout),
 or a resumed pass extracts everything. An isolated PostgreSQL test keeps the
 stored entries, member stats and lookups identical to writing everything, across
 several extract-and-prune rounds.
+
+Band prune still ranks every band entry, about 20 million rows, to find the
+few scopes with rows to delete: 2.6 executor-minutes and 28 GB of reads in
+scrape `1502`. In scrape `1520` only about 470 of 2,196 scopes had a band entry
+inserted or updated after the flush. `Scraper:BandPruneChangedScopesOnly`
+(default `false`) prunes only those scopes:
+
+- The previous prune's start time is recorded in `band_prune_state`.
+- The next prune ranks only scopes with a band entry whose `last_updated_at`
+  is later than 15 minutes before that time. Writers stamp rows when they stage
+  them, so a row committed just after the previous prune can carry an earlier
+  time; the 15 minutes cover that.
+- Every write that can change a scope's window updates `last_updated_at`:
+  inserts, score increases and over-threshold changes. The flush already did
+  this for over-threshold changes; band extraction and the registered-band
+  lookups now do as well.
+- An unchanged scope is exactly as the previous prune left it. It has nothing
+  to delete, and its recorded floor and margin keys stay valid, so only the
+  pruned scopes' floors and margin keys are replaced.
+- The shadow-row check counts a skipped row of an unchanged scope as kept only
+  when it is stored or registered: its window still ends at or above the floor.
+- A full prune runs when no prune is recorded, when the window size changes,
+  and at least every `Scraper:BandPruneFullIntervalHours` (default 24). This
+  also catches deletions that need no row change, such as a team whose member
+  unregistered.
+
+Isolated PostgreSQL tests keep the stored entries, member stats, lookups and
+floors identical to a full prune across several rounds of changes, including an
+over-threshold flip. They also cover the full-prune triggers and the
+shadow-row check.
 
 ## Durable phase progress
 

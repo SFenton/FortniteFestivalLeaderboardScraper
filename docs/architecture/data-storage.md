@@ -782,7 +782,9 @@ scratch list of the flush rows found below a floor (key, score, end
 time), cleared by the next prune after it counts how many of them it would
 keep. `band_retention_floor_margin_keys` holds, per scope, the keys at smaller
 candidate margins for the next prune's margin check, and is replaced with the
-floors. Both tables are derived and safe to truncate. Behaviour is
+floors. Both tables are derived and safe to truncate. `band_prune_state` (one row)
+records when band prune last ran and last ran over every scope, for the
+changed-scope prune; deleting it forces the next prune to run in full. Behaviour is
 described in [worker: band retention floor](../components/worker.md#band-retention-floor).
 
 ### Rank-history latest rows
@@ -990,6 +992,11 @@ the transaction boundary only. One transaction rebuilds every selected scope of
 a song and band type from a per-transaction temporary copy of that pair's
 normalized band entries and member-stat arrays. Rows, generations, scope
 state, and publication are identical to the per-scope path.
+
+`band_current_projection_sweep_state` (one row, created by the worker on first
+use) records when the last stale sweep started, and when the last full sweep
+started, for `Scraper:BandCurrentProjectionStaleSweepChangedPairsOnly`.
+Deleting it forces the next sweep to scan every pair.
 
 Live scrape `1293` validated the compatibility shape and bounded write cost:
 the two prior comparable scrapes contained `69` timing rows each, while `1293`
