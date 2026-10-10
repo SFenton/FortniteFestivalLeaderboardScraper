@@ -971,6 +971,12 @@ public sealed class ScraperOptions
     /// </summary>
     public int LeaderboardRivalsMaxDegreeOfParallelism { get; set; } = 4;
 
+    /// <summary>
+    /// Instruments whose scheduled leaderboard-rival batches run concurrently.
+    /// Each instrument still processes its account batches in order.
+    /// </summary>
+    public int LeaderboardRivalsInstrumentParallelism { get; set; } = 1;
+
     // ─── Band Scraping ─────────────────────────────────
 
     /// <summary>

@@ -461,12 +461,13 @@ rollback.
 | Key | Default | Valid range | Purpose |
 |---|---:|---:|---|
 | `Scraper:LeaderboardRivalsMaxDegreeOfParallelism` | `4` | positive integer | Registered accounts included in each per-instrument ranking/profile batch |
+| `Scraper:LeaderboardRivalsInstrumentParallelism` | `1` | positive integer (capped at the instrument count) | Instruments whose scheduled batches run concurrently; each instrument keeps its batches in order |
 
 The Compose form is
 `Scraper__LeaderboardRivalsMaxDegreeOfParallelism`. Despite the retained key
 name, scheduled processing no longer fans out that many accounts concurrently.
-It processes one instrument at a time and chunks registered accounts by this
-value. Each chunk loads rankings and its deduplicated user/neighbor profiles
+By default it processes one instrument at a time (see the instrument
+parallelism key below) and chunks registered accounts by this value. Each chunk loads rankings and its deduplicated user/neighbor profiles
 once, then persists every user/instrument independently.
 
 Lower values reduce peak profile memory but repeat the full-instrument profile
@@ -475,6 +476,14 @@ profiles and score DTOs in memory. The setting does not change rank methods,
 neighbor radius, sample caps, persistence shape, or publication behavior.
 Direct single-user calls and max-score maintenance keep their separate
 on-demand and maintenance-lease paths.
+
+`Scraper:LeaderboardRivalsInstrumentParallelism` runs that many instruments'
+batches at once; each holds its instrument's rankings (up to about 1.5 million
+rows, sorted five ways) in worker memory. With all ten registered accounts in
+one batch per instrument (batch size `16`), scrape `1524` spent 135 seconds in
+Leaderboard Rivals, about 0.7 to 27 seconds per instrument, mostly loading
+rankings and reading user and neighbor profiles one instrument at a time.
+Pair-completion callbacks stay serialized with a monotonically increasing count.
 
 ## Rankings concurrency
 
