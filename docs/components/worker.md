@@ -911,10 +911,19 @@ Snapshot activation gives nearly every solo scope a new source, so each scrape
 refreshes nearly all of them. Scrape `1509` refreshed 1,288 scopes before
 Rivals (133 seconds) and all 6,240 in `Cleanup.SoloCurrentProjection`
 (42,527,106 rows, 378 seconds). Each refresh compares the desired rows with the
-stored ones and records the result in `solo_current_projection_scope`. A full
-scope typically has about 10,000 rows, of which 3–7 differ. The refresh
-nevertheless deletes and re-inserts every row under a new generation,
-maintaining four indexes per row.
+stored ones and records the result in `solo_current_projection_scope`. In a
+scope whose source did not change, a full scope of about 10,000 rows typically
+has 3–7 differing rows. The refresh nevertheless deleted and re-inserted every
+row under a new generation, maintaining four indexes per row.
+
+Scopes that received a new snapshot are different. Every snapshot row gets the
+snapshot's write time as `first_seen_at` and `last_updated_at`. More
+importantly, any new or improved entry shifts the rank of every row below it.
+Between snapshots `1519` and `1520`, two sampled Solo Bass scopes had new
+computed ranks for 62% and 86% of their rows; score, `api_rank` and percentile
+were unchanged. Carrying timestamps forward from the previous snapshot would
+therefore only modestly shrink the refresh of these scopes, and it would cost
+an extra lookup per staged row in the leaderboard flush, so it was not done.
 
 `Scraper:SoloCurrentProjectionApplyDiff` (default `false`) writes only the
 differences when the scope is ready and every stored row carries the scope's
