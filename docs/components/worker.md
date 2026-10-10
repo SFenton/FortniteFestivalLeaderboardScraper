@@ -1056,8 +1056,9 @@ then prune deleted 40,047, 108,752 and 108,742).
 scrape's floor filter to extraction. Extraction then removes the rows that rank
 below their scope's floor and are not stored before its upsert, and drops their
 member stats and lookups. It records them in the shadow table like the flush,
-and only with the mode and filter state the flush used: a pass without a floor,
-or a resumed pass, extracts everything. An isolated PostgreSQL test keeps the
+and only with the mode and filter state the flush used. A pass without a floor,
+a pass whose band flush was skipped (for example after a band fetch timeout),
+or a resumed pass extracts everything. An isolated PostgreSQL test keeps the
 stored entries, member stats and lookups identical to writing everything, across
 several extract-and-prune rounds.
 

@@ -75,7 +75,7 @@ public sealed class PostScrapeBandExtractor
     {
         var sw = Stopwatch.StartNew();
         _log.LogInformation("Post-scrape band extraction starting...");
-        if (retentionFloor is not { IsActive: true })
+        if (retentionFloor is not { IsActive: true, IsPrepared: true })
             retentionFloor = null;
         var floorRowsBefore = retentionFloor?.BelowFloorRows ?? 0;
 

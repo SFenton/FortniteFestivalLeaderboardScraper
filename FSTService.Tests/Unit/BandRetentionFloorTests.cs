@@ -163,6 +163,24 @@ public sealed class BandRetentionFloorTests : IDisposable
     }
 
     [Fact]
+    public void Unprepared_or_disabled_filter_is_not_prepared_for_writers_after_the_flush()
+    {
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var filter = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        Assert.True(filter.IsActive);
+        Assert.False(filter.IsPrepared);
+
+        filter.PrepareForFlush(_enforced.DataSource);
+        Assert.True(filter is { IsActive: true, IsPrepared: true });
+
+        Execute(_enforced, "INSERT INTO band_retention_floor_shadow (song_id, band_type, team_key, instrument_combo, score, end_time_key) VALUES ('s', 'Band_Duets', 't', '0:1', 1, '')");
+        var pending = new BandRetentionFloorFilter(BandRetentionFloorMode.Enforce, registered, MaxValid);
+        pending.PrepareForFlush(_enforced.DataSource);
+        Assert.True(pending.PendingEvidence);
+        Assert.False(pending.IsActive);
+    }
+
+    [Fact]
     public async Task Report_mode_keeps_rows_and_prune_reports_no_survivors()
     {
         var persistence = Persistence(_enforced);

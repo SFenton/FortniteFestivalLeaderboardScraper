@@ -739,7 +739,9 @@ public sealed class ScrapeOrchestrator
         var ctx = new ScrapePassContext
         {
             ScrapeId = scrapeId,
-            BandRetentionFloor = bandRetentionFloor,
+            // Only a floor the band flush prepared and used; a skipped flush
+            // (for example a band fetch timeout) leaves it unprepared.
+            BandRetentionFloor = bandRetentionFloor is { IsActive: true, IsPrepared: true } ? bandRetentionFloor : null,
             AccessToken = accessToken,
             CallerAccountId = callerAccountId,
             RegisteredIds = registeredIds,
