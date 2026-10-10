@@ -304,6 +304,33 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_runs_the_schema_ddl_once_per_builder()
+    {
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await builder.EnsureSchemaAsync();
+        ExecuteSql("DROP INDEX IF EXISTS ix_scps_status_updated");
+
+        await builder.EnsureSchemaAsync();
+        Assert.Equal(0, ReadIndexCount("ix_scps_status_updated"));
+
+        await new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>()).EnsureSchemaAsync();
+        Assert.Equal(1, ReadIndexCount("ix_scps_status_updated"));
+    }
+
+    private long ReadIndexCount(string indexName)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM pg_class WHERE relname = @indexName AND relkind = 'i'";
+        cmd.Parameters.AddWithValue("indexName", indexName);
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    [Fact]
     public async Task ApplyDiff_rewrites_scopes_that_are_not_ready_or_mixed_generation()
     {
         var log = Substitute.For<ILogger<SoloCurrentProjectionBuilder>>();

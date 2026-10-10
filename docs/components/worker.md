@@ -891,6 +891,13 @@ line reports `diff_applied`. PostgreSQL tests compare the content against a
 full rewrite after inserts, updates, rank shifts, and removals, and cover the
 reader join and the fallback.
 
+The early refresh, the cleanup refresh, precompute, and notification recovery
+each ensured the projection schema first, about four times per scrape. Its
+`CREATE INDEX IF NOT EXISTS` statements take a ShareLock on every projection
+partition even when the indexes exist. That cancelled any autovacuum on those
+partitions, which happened every scrape. The worker's single builder now runs
+that DDL once per process.
+
 ### Band retention floor
 
 Band prune keeps, per song and band type, the over-threshold entries ranked
