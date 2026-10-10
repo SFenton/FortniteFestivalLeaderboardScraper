@@ -1437,7 +1437,13 @@ public sealed class RankingsCalculator
             1,
             instruments.Count + 1);
 
-        var snapshotItems = OrderSnapshotItems(instruments, RankedAccountCountOrZero);
+        var snapshotItems = OrderSnapshotItems(
+            instruments,
+            instrument =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return RankedAccountCountOrZero(instrument);
+            });
 
         await Parallel.ForEachAsync(snapshotItems,
             new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
