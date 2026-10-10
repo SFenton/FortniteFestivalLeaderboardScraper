@@ -892,6 +892,29 @@ ids from 0 to 10, plus the empty combo. That replaces about 20 million
 evaluations of the combo-id expression. Any other value falls back to the
 expression, and a PostgreSQL test checks that the map and the expression agree.
 
+Even in one pass, the sweep reads every band entry (2.4 minutes in scrapes
+`1511` to `1520`), although few pairs change between scrapes: in scrape `1520`
+about 470 of 2,196 (song, band type) pairs had an updated band entry.
+`Scraper:BandCurrentProjectionStaleSweepChangedPairsOnly` (default `false`) scans
+only pairs that can need a rebuild:
+
+- pairs with a band entry whose `last_updated_at` is later than 15 minutes
+  before the last recorded sweep;
+- the impacted scopes' pairs, which include prune's deletions, the only way
+  rows leave `band_entries`;
+- pairs with a scope that is not `ready` or whose candidate is not published.
+
+Every other scope was current after the last sweep's refresh, and its source
+has not changed. The worker records a sweep in
+`band_current_projection_sweep_state` only after its selected scopes were
+refreshed, and only if every stale scope fitted under the cap. A crash, or
+stale scopes left over by the cap, therefore leaves the next sweep looking at
+the same changes. A full sweep runs without a recorded sweep and at least every
+`Scraper:BandCurrentProjectionStaleSweepFullIntervalHours` (default 24), which
+also catches drift with no row change. PostgreSQL tests match the full sweep's
+selection after changes and an unready scope, and cover the cap and the
+interval.
+
 Bounded isolated PostgreSQL tests preserve exact projection, scope-state, and
 global-state hashes for zero, all-unchanged, one-changed, mixed, missing-member,
 nullable-stat, and 64-scope/2,048-row fixtures, plus failure, retry, and

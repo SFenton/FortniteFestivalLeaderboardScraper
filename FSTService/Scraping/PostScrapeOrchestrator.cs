@@ -1658,7 +1658,13 @@ public sealed class PostScrapeOrchestrator
                 selection = await _bandCurrentProjectionBuilder.SelectImpactedAndSweptStaleScopesAsync(
                     impactedScopes,
                     sweepMax,
-                    ct);
+                    ct,
+                    _options.Value.BandCurrentProjectionStaleSweepChangedPairsOnly
+                        ? new BandCurrentProjectionSweepScopeOptions(
+                            ChangedPairsOnly: true,
+                            FullSweepInterval: TimeSpan.FromHours(Math.Max(1, _options.Value.BandCurrentProjectionStaleSweepFullIntervalHours)),
+                            ChangeSafetyMargin: TimeSpan.FromMinutes(15))
+                        : null);
             }
             else
             {
@@ -1683,17 +1689,32 @@ public sealed class PostScrapeOrchestrator
         }
 
         _log.LogInformation(
-            "Band current projection stale sweep added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}); {ImpactedSelected:N0}/{ImpactedScopes:N0} impacted scope(s) need a rebuild.",
+            "Band current projection stale sweep ({SweepKind}) added {StaleScopes:N0} stale scope(s) from {CandidateScopes:N0} non-impacted candidate(s) (cap {Cap:N0}); {ImpactedSelected:N0}/{ImpactedScopes:N0} impacted scope(s) need a rebuild.",
+            selection.FullSweep ? "all pairs" : "changed pairs",
             selection.StaleScopes.Count,
             selection.SweepCandidateCount,
             sweepMax,
             selection.ImpactedScopes.Count,
             impactedScopes.Count);
-        return await RefreshBandCurrentProjectionScopesAsync(
+        var metrics = await RefreshBandCurrentProjectionScopesAsync(
             MergeCurrentProjectionScopes(selection.ImpactedScopes, selection.StaleScopes),
             ct,
             preselectedConsideredScopeCount:
                 MergeCurrentProjectionScopes(impactedScopes, selection.StaleScopes).Count);
+
+        if (_options.Value.BandCurrentProjectionStaleSweepChangedPairsOnly)
+        {
+            try
+            {
+                await _bandCurrentProjectionBuilder.RecordStaleSweepAsync(selection, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Recording the band current projection stale sweep failed; the next sweep covers the same changes.");
+            }
+        }
+
+        return metrics;
     }
 
     internal Task RunBandMaintenanceForTestAsync(
