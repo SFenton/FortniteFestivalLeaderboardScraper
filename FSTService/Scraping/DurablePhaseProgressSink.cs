@@ -180,6 +180,8 @@ public sealed class DurablePhaseProgressSink
         "Scraper:UseValidatedSoloProjectionForLegacyDerivedReaders",
         "Scraper:BandCurrentProjectionStaleScopeSweepMaxScopes",
         "Scraper:BandCurrentProjectionSinglePassStaleSweep",
+        "Scraper:BandCurrentProjectionStaleSweepChangedPairsOnly",
+        "Scraper:BandCurrentProjectionStaleSweepFullIntervalHours",
         "Scraper:BandSearchProjectionParallelBandTypes",
         "Scraper:BandSpoolFlushMaxParallelBandTypes",
         "Scraper:BandRetentionFloorMode",

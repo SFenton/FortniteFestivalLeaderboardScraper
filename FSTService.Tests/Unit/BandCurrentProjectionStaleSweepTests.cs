@@ -135,6 +135,81 @@ public sealed class BandCurrentProjectionStaleSweepTests
         }
     }
 
+    private static readonly BandCurrentProjectionSweepScopeOptions ChangedPairs =
+        new(ChangedPairsOnly: true, FullSweepInterval: TimeSpan.FromHours(24), ChangeSafetyMargin: TimeSpan.Zero);
+
+    [Fact]
+    public async Task ChangedPairSweepSelectsTheSameScopesAsAFullSweep()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        foreach (var song in new[] { "song-a", "song-b", "song-c", "song-d", "song-e" })
+            Seed(fixture, song, teams: 3);
+        var builder = CreateBuilder(fixture);
+
+        // No recorded sweep: the first one scans every pair.
+        var first = await builder.SelectImpactedAndSweptStaleScopesAsync([], 1_000, sweepScope: ChangedPairs);
+        Assert.True(first.FullSweep);
+        await builder.RefreshScopesAsync([.. first.ImpactedScopes, .. first.StaleScopes], Options());
+        await builder.RecordStaleSweepAsync(first);
+
+        await Task.Delay(20);
+        Seed(fixture, "song-b", teams: 5);
+        Seed(fixture, "song-c", teams: 6);
+        // An unready scope in a pair without a source change is still found.
+        await ExecuteAsync(fixture, "UPDATE band_current_projection_scope SET status = 'failed' WHERE song_id = 'song-d' AND ranking_scope = 'overall'");
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> impacted = [Overall("song-a"), Overall("song-b")];
+
+        var changed = await builder.SelectImpactedAndSweptStaleScopesAsync(impacted, 1_000, sweepScope: ChangedPairs);
+        var full = await builder.SelectImpactedAndSweptStaleScopesAsync(impacted, 1_000);
+
+        Assert.False(changed.FullSweep);
+        Assert.True(full.FullSweep);
+        Assert.Equal(full.ImpactedScopes, changed.ImpactedScopes);
+        Assert.Equal(full.StaleScopes, changed.StaleScopes);
+        Assert.Contains(Overall("song-d"), changed.StaleScopes);
+        Assert.Contains(changed.StaleScopes, static scope => scope.SongId == "song-c");
+        Assert.True(changed.SweepCandidateCount < full.SweepCandidateCount);
+    }
+
+    [Fact]
+    public async Task ChangedPairSweepIsNotRecordedWhenTheCapLeavesStaleScopes()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        foreach (var song in new[] { "song-a", "song-b", "song-c" })
+            Seed(fixture, song, teams: 3);
+        var builder = CreateBuilder(fixture);
+        var first = await builder.SelectImpactedAndSweptStaleScopesAsync([], 1_000, sweepScope: ChangedPairs);
+        await builder.RefreshScopesAsync([.. first.ImpactedScopes, .. first.StaleScopes], Options());
+        await builder.RecordStaleSweepAsync(first);
+        var recorded = await ReadSweepStateAsync(fixture);
+
+        await Task.Delay(20);
+        Seed(fixture, "song-b", teams: 5);
+        Seed(fixture, "song-c", teams: 6);
+        var capped = await builder.SelectImpactedAndSweptStaleScopesAsync([], 1, sweepScope: ChangedPairs);
+        Assert.False(capped.AllStaleScopesSelected);
+        await builder.RefreshScopesAsync(capped.StaleScopes, Options());
+        await builder.RecordStaleSweepAsync(capped);
+        Assert.Equal(recorded, await ReadSweepStateAsync(fixture));
+
+        var next = await builder.SelectImpactedAndSweptStaleScopesAsync([], 1_000, sweepScope: ChangedPairs);
+        Assert.NotEmpty(next.StaleScopes);
+        Assert.DoesNotContain(capped.StaleScopes[0], next.StaleScopes);
+
+        await ExecuteAsync(fixture, "UPDATE band_current_projection_sweep_state SET last_full_sweep_at = now() - interval '25 hours'");
+        Assert.True((await builder.SelectImpactedAndSweptStaleScopesAsync([], 1_000, sweepScope: ChangedPairs)).FullSweep);
+    }
+
+    private static async Task<(DateTime LastSweepAt, DateTime LastFullSweepAt)> ReadSweepStateAsync(InMemoryMetaDatabase fixture)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT last_sweep_at, last_full_sweep_at FROM band_current_projection_sweep_state";
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return (reader.GetDateTime(0), reader.GetDateTime(1));
+    }
+
     [Fact]
     public async Task ScopeKeyAndSourceLoadersCoverProjectionAndSourceScopes()
     {

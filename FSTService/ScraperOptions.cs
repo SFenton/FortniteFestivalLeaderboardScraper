@@ -1057,6 +1057,23 @@ public sealed class ScraperOptions
     public bool BandCurrentProjectionSinglePassStaleSweep { get; set; }
 
     /// <summary>
+    /// With the single-pass stale sweep, scan only (song, band type) pairs that
+    /// can need a rebuild: pairs with a band entry updated since 15 minutes before
+    /// the last recorded sweep, impacted pairs, and pairs with an unready or
+    /// unpublished scope. A full sweep still runs at least every
+    /// <see cref="BandCurrentProjectionStaleSweepFullIntervalHours"/> hours.
+    /// Default false. Set via <c>Scraper__BandCurrentProjectionStaleSweepChangedPairsOnly</c>.
+    /// </summary>
+    public bool BandCurrentProjectionStaleSweepChangedPairsOnly { get; set; }
+
+    /// <summary>
+    /// Maximum hours between full stale sweeps when
+    /// <see cref="BandCurrentProjectionStaleSweepChangedPairsOnly"/> is on. Default 24.
+    /// Set via <c>Scraper__BandCurrentProjectionStaleSweepFullIntervalHours</c>.
+    /// </summary>
+    public int BandCurrentProjectionStaleSweepFullIntervalHours { get; set; } = 24;
+
+    /// <summary>
     /// When true, BandMaintenance refreshes the band search projection one
     /// band type per concurrent transaction instead of one transaction for all
     /// band types. Default false. Set via

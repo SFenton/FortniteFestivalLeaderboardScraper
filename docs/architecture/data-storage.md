@@ -991,6 +991,11 @@ a song and band type from a per-transaction temporary copy of that pair's
 normalized band entries and member-stat arrays. Rows, generations, scope
 state, and publication are identical to the per-scope path.
 
+`band_current_projection_sweep_state` (one row, created by the worker on first
+use) records when the last stale sweep started, and when the last full sweep
+started, for `Scraper:BandCurrentProjectionStaleSweepChangedPairsOnly`.
+Deleting it forces the next sweep to scan every pair.
+
 Live scrape `1293` validated the compatibility shape and bounded write cost:
 the two prior comparable scrapes contained `69` timing rows each, while `1293`
 contained `72`, exactly the three new BandMaintenance rows. Their stored tuple
