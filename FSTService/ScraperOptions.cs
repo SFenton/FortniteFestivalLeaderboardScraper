@@ -1093,6 +1093,14 @@ public sealed class ScraperOptions
     public int BandRetentionFloorMarginRows { get; set; } = BandLeaderboardPersistence.DefaultRetentionFloorMarginRows;
 
     /// <summary>
+    /// When true, post-scrape band extraction applies the scrape's retention
+    /// floor (the same filter and mode as the band flush) to the rows it would
+    /// insert, so solo-derived band rows that prune would delete are not written.
+    /// Default false. Set via <c>Scraper__BandRetentionFloorApplyToExtraction</c>.
+    /// </summary>
+    public bool BandRetentionFloorApplyToExtraction { get; set; }
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>

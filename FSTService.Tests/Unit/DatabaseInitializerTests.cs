@@ -91,6 +91,47 @@ public class DatabaseInitializerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureSchemaAsync_sets_rank_history_fillfactor_idempotently()
+    {
+        using (var reset = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = reset.CreateCommand())
+        {
+            cmd.CommandText = "ALTER TABLE rank_history_pro_bass RESET (fillfactor); ALTER TABLE composite_rank_history RESET (fillfactor)";
+            cmd.ExecuteNonQuery();
+        }
+
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var connection = _metaFixture.DataSource.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT relname
+            FROM pg_class
+            WHERE (relname LIKE 'rank\_history\_solo\_%' OR relname LIKE 'rank\_history\_pro\_%' OR relname = 'composite_rank_history')
+              AND relkind = 'r'
+              AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[]))
+            ORDER BY relname
+            """;
+        var tables = new List<string>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+                tables.Add(reader.GetString(0));
+        }
+
+        Assert.Equal(
+            [
+                "composite_rank_history",
+                "rank_history_pro_bass", "rank_history_pro_cymbals", "rank_history_pro_drums",
+                "rank_history_pro_guitar", "rank_history_pro_vocals",
+                "rank_history_solo_bass", "rank_history_solo_drums", "rank_history_solo_guitar",
+                "rank_history_solo_vocals",
+            ],
+            tables);
+    }
+
+    [Fact]
     public async Task EnsureSchemaAsync_creates_idempotent_scrape_acquisition_checkpoint()
     {
         await DatabaseInitializer.EnsureSchemaAsync(
