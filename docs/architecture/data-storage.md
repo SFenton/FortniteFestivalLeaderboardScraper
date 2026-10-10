@@ -837,16 +837,23 @@ Production rollout (`Scraper:UseRankHistoryLatestState=true` since the scrape
   rows were still laid out unordered, so later days should do at least as
   well.
 
-History rows get almost no HOT updates: about 0% across the `rank_history`
-partitions and 0.4% for `composite_rank_history`, because pages are full. A
-same-day update therefore writes a new tuple and new primary-key index
-entries. As an experiment, `rank_history_pro_guitar` alone has had
-`fillfactor = 70` since 2026-10-09 02:05Z. The schema initializer does not set
-this. It affects only rows written after that time, and
-`ALTER TABLE rank_history_pro_guitar RESET (fillfactor)` reverts it. Compare
-its HOT ratio and snapshot time after 2026-10-10 00:00Z before deciding
-anything for the other partitions; a lower fillfactor trades history storage
-for fewer index writes.
+History rows used to get almost no HOT updates: about 0% across the
+`rank_history` partitions and 0.4% for `composite_rank_history`, because pages
+were full. A same-day update therefore wrote a new tuple and new primary-key
+index entries. `rank_history_pro_guitar` alone got `fillfactor = 70` on
+2026-10-09 02:05Z as an experiment. In scrape `1513`, the second scrape of
+2026-10-10, it updated 42.5% of that day's rows in place (227,555 of
+535,923). Its primary key grew 3 MB, against 42 to 45 MB for each 100% full
+solo partition. Snapshot time did not improve: the `ON CONFLICT` key probes
+dominate.
+
+Every `rank_history` partition and `composite_rank_history` now use
+`fillfactor = 70`; it was applied in production on 2026-10-10 15:17Z. The
+schema initializer sets it only when `pg_class.reloptions` differs, so startup
+takes no lock otherwise. It affects pages written afterwards: a new day's rows
+take about 43% more heap, and same-day updates write fewer index entries, less
+WAL and fewer dead tuples. `ALTER TABLE <table> RESET (fillfactor)` reverts a
+table; rows already written keep their layout.
 
 ## Publication ownership
 
