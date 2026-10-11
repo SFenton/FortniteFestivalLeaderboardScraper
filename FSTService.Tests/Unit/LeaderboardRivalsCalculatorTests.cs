@@ -315,8 +315,10 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
                 samples.Count()));
     }
 
-    [Fact]
-    public void ScheduledBatch_PersistsEquivalentResults_AndReadsProfilesOncePerAccountBatch()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void ScheduledBatch_PersistsEquivalentResults_AndReadsProfilesOncePerAccountBatch(int instrumentParallelism)
     {
         var db = _persistence.GetOrCreateInstrumentDb(
             "Solo_Guitar");
@@ -349,8 +351,9 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
             StringComparer.OrdinalIgnoreCase);
         var profileReads = 0;
         _sut.ProfileBatchReadTestHook =
-            (_, _) => profileReads++;
+            (_, _) => Interlocked.Increment(ref profileReads);
         var completedPairs = 0;
+        var callbackCounts = new List<int>();
 
         var result = _sut.ComputeForUsersBatched(
             users,
@@ -358,7 +361,11 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
             rankingsAuthoritative: true,
             onPairComplete:
                 (_, completed) =>
-                    completedPairs = completed);
+                {
+                    completedPairs = completed;
+                    callbackCounts.Add(completed);
+                },
+            instrumentParallelism: instrumentParallelism);
 
         var instrumentCount =
             _persistence.GetInstrumentKeys().Count;
@@ -368,6 +375,9 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         Assert.Equal(
             instrumentCount * users.Length,
             completedPairs);
+        Assert.Equal(
+            Enumerable.Range(1, instrumentCount * users.Length),
+            callbackCounts);
         Assert.Equal(
             expected.Values.Sum(item => item.Rivals.Count),
             result.RivalCount);

@@ -3055,6 +3055,9 @@ public sealed class PostScrapeOrchestrator
                         accountBatchSize,
                         rankingsAuthoritative:
                             ctx.RankingsComputedSuccessfully,
+                        instrumentParallelism:
+                            _options.Value
+                                .LeaderboardRivalsInstrumentParallelism,
                         onPairComplete:
                             (accountId, _) =>
                         {
