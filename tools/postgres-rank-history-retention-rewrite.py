@@ -21,7 +21,7 @@ Commands:
   build     build replacements (kept rows dated before today)
   swap      swap built replacements in (fetch window only)
   run       build and swap every table, waiting for fetch windows
-  archive   pg_dump each swapped-out table and verify the archive
+  archive   pg_dump each swapped-out table and verify the archive (fetch window only)
   drop      drop swapped-out tables whose archive is verified
   rollback  swap one table's original back before it is dropped
 """
@@ -284,8 +284,8 @@ SELECT json_build_object(
 
 
 def command_build(args: argparse.Namespace, tables: list[str] | None = None) -> int:
-    manifest = load_manifest()
     with run_lock():
+        manifest = load_manifest()
         for table in tables or selected(args):
             if manifest.get(table, {}).get("status") not in (None, "pending", "built"):
                 continue
@@ -395,9 +395,9 @@ def drop_bound(table: str) -> bool:
 
 
 def command_swap(args: argparse.Namespace, tables: list[str] | None = None) -> int:
-    manifest = load_manifest()
     ensure_state_table()
     with run_lock():
+        manifest = load_manifest()
         for table in tables or selected(args):
             entry = manifest.get(table, {})
             if entry.get("status") == "swapped" and not entry.get("bound_dropped"):
@@ -446,12 +446,13 @@ def command_run(args: argparse.Namespace) -> int:
 # ── archive and drop ─────────────────────────────────────────────────
 
 def command_archive(args: argparse.Namespace) -> int:
-    manifest = load_manifest()
     with run_lock():
+        manifest = load_manifest()
         for table in selected(args):
             entry = manifest.get(table, {})
             if entry.get("status") != "swapped":
                 continue
+            require_window(args.window)
             n = names(table)
             path = ROOT / f"{n['old']}.dump"
             # The swapped-out table is detached and never written again: it holds the
@@ -475,6 +476,11 @@ def command_archive(args: argparse.Namespace) -> int:
 
 
 def command_drop(args: argparse.Namespace) -> int:
+    with run_lock():
+        return drop_archived(args)
+
+
+def drop_archived(args: argparse.Namespace) -> int:
     manifest = load_manifest()
     for table in selected(args):
         entry = manifest.get(table, {})
@@ -560,14 +566,14 @@ CREATE INDEX IF NOT EXISTS {n['old_brin']} ON public.{n['old']} USING brin (snap
 
 
 def command_rollback(args: argparse.Namespace) -> int:
-    manifest = load_manifest()
     table = args.table
-    entry = manifest.get(table, {})
-    if entry.get("status") not in ("swapped", "archived"):
-        raise RetirementError(f"{table} is {entry.get('status', 'pending')}; only a swapped table can roll back")
-    if not exists(names(table)["old"]):
-        raise RetirementError(f"{names(table)['old']} no longer exists; restore it from {entry.get('archive_path')}")
     with run_lock():
+        manifest = load_manifest()
+        entry = manifest.get(table, {})
+        if entry.get("status") not in ("swapped", "archived"):
+            raise RetirementError(f"{table} is {entry.get('status', 'pending')}; only a swapped table can roll back")
+        if not exists(names(table)["old"]):
+            raise RetirementError(f"{names(table)['old']} no longer exists; restore it from {entry.get('archive_path')}")
         prepare_rollback(table)
         require_window(args.window)
         _, attempts = run_with_lock_retries(rollback_sql(table, entry), f"rollback of {table}", timeout=3600)

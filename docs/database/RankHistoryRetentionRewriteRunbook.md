@@ -54,10 +54,10 @@ smallest partition first and composite last:
    transaction records the cutoff in `rank_history_retention_state`. Lock
    timeouts and deadlocks retry 12 times, then defer. The bound `CHECK` is
    dropped afterwards.
-3. **archive**: `pg_dump -Fc -Z zstd:3` of each detached `<table>_rtn_old`
-   to the archive root. Its TOC must hold the table, data, and primary key,
-   and a stream restore in a disposable `postgres:17` container must count
-   the rows the build and swap recorded.
+3. **archive** (each table starts in a fetch window): `pg_dump -Fc -Z zstd:3`
+   of each detached `<table>_rtn_old` to the archive root. Its TOC must hold
+   the table, data, and primary key, and a stream restore in a disposable
+   `postgres:17` container must count the rows the build and swap recorded.
 4. **drop**: drops `<table>_rtn_old` only when its archive's SHA-256 matches
    and the table is standalone.
 

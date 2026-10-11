@@ -1676,7 +1676,8 @@ public static class DatabaseInitializer
 
         -- Rank-history retention trims rows by snapshot_date once per day and records
         -- the cutoff it reached per table. The BRIN index narrows that scan; it is
-        -- built here only for small tables (fresh installs), because a large
+        -- built here only while the heap is under 1 GiB (exact size, not planner
+        -- statistics) and gives up after a 2 s lock wait, because a large
         -- production table is rewritten and indexed by
         -- tools/postgres-rank-history-retention-rewrite.py instead.
         CREATE TABLE IF NOT EXISTS rank_history_retention_state (
@@ -1685,15 +1686,21 @@ public static class DatabaseInitializer
             updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
         );
         DO $$
+        DECLARE
+            previous_lock_timeout TEXT := current_setting('lock_timeout');
         BEGIN
             IF to_regclass('public.ix_rh_retention_cutoff_brin') IS NULL
-               AND (SELECT COALESCE(SUM(GREATEST(c.reltuples, 0)), 0)
-                    FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
-                    WHERE i.inhparent = 'rank_history'::regclass) < 20000000
+               AND (SELECT COALESCE(SUM(pg_relation_size(i.inhrelid)), 0)
+                    FROM pg_inherits i
+                    WHERE i.inhparent = 'rank_history'::regclass) < 1073741824
             THEN
+                PERFORM set_config('lock_timeout', '2s', true);
                 CREATE INDEX ix_rh_retention_cutoff_brin ON rank_history
                     USING brin (snapshot_date) WITH (pages_per_range = 128, autosummarize = on);
+                PERFORM set_config('lock_timeout', previous_lock_timeout, true);
             END IF;
+        EXCEPTION WHEN lock_not_available THEN
+            RAISE NOTICE 'rank_history is busy; ix_rh_retention_cutoff_brin is left for a later start';
         END $$;
 
         CREATE TABLE IF NOT EXISTS rank_history_snapshot_stats (
@@ -3140,14 +3147,21 @@ public static class DatabaseInitializer
                 ALTER TABLE composite_rank_history SET (fillfactor=70);
             END IF;
         END $$;
+        -- See ix_rh_retention_cutoff_brin: small heaps only, bounded lock wait.
         DO $$
+        DECLARE
+            previous_lock_timeout TEXT := current_setting('lock_timeout');
         BEGIN
             IF to_regclass('public.ix_crh_retention_cutoff_brin') IS NULL
-               AND (SELECT GREATEST(reltuples, 0) FROM pg_class WHERE oid = 'composite_rank_history'::regclass) < 20000000
+               AND pg_relation_size('composite_rank_history'::regclass) < 1073741824
             THEN
+                PERFORM set_config('lock_timeout', '2s', true);
                 CREATE INDEX ix_crh_retention_cutoff_brin ON composite_rank_history
                     USING brin (snapshot_date) WITH (pages_per_range = 128, autosummarize = on);
+                PERFORM set_config('lock_timeout', previous_lock_timeout, true);
             END IF;
+        EXCEPTION WHEN lock_not_available THEN
+            RAISE NOTICE 'composite_rank_history is busy; ix_crh_retention_cutoff_brin is left for a later start';
         END $$;
 
         -- =====================================================================
