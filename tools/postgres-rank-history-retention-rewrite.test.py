@@ -67,6 +67,17 @@ class SwapSqlTests(unittest.TestCase):
         self.assertIn("('solo:Solo_Bass', '2026-09-11'::date, now())", sql)
         self.assertIn("GREATEST(", sql)
 
+    def test_swap_locks_the_replacement_first_and_only_waits_long_for_locks_readers_ignore(self):
+        sql = rewrite.swap_sql("rank_history_solo_bass", ENTRY)
+        order = [sql.index(s) for s in (
+            "SET LOCAL lock_timeout = '3s';",
+            "LOCK TABLE public.rank_history_solo_bass_rtn_new IN ACCESS EXCLUSIVE MODE;",
+            "LOCK TABLE public.rank_history_solo_bass IN SHARE MODE;",
+            "SET LOCAL lock_timeout = '500ms';",
+            "DETACH PARTITION")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("ALTER TABLE public.rank_history_solo_bass RESET (autovacuum_enabled);", sql)
+
     def test_composite_swap_renames_without_partition_ddl(self):
         sql = rewrite.swap_sql("composite_rank_history", ENTRY)
         self.assertNotIn("PARTITION", sql)

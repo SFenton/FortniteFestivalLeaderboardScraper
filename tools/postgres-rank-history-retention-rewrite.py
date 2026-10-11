@@ -229,8 +229,10 @@ def build(table: str, cutoff: dt.date, build_day: dt.date) -> dict:
         "SET LOCAL statement_timeout = '6h';",
         "SET LOCAL work_mem = '1GB';",
         # NOT NULL constraints copy; no other constraint or index does.
+        # Autovacuum stays off until the swap: on a freshly filled table it would
+        # hold a lock the swap's rename must wait for.
         f"CREATE TABLE public.{n['new']} (LIKE public.{table} INCLUDING DEFAULTS "
-        f"INCLUDING STORAGE INCLUDING COMPRESSION) WITH (fillfactor = 100);",
+        f"INCLUDING STORAGE INCLUDING COMPRESSION) WITH (fillfactor = 100, autovacuum_enabled = false);",
         # One scan: per-date row counts (for verification) and each account's newest
         # date at or before the cutoff.
         f"""CREATE TEMP TABLE _rtn_stats ON COMMIT DROP AS
@@ -310,11 +312,16 @@ def swap_sql(table: str, entry: dict) -> str:
     b = quote(entry["build_day"])
     lines = [
         "BEGIN;",
-        # lock_timeout stays below the server's 1 s deadlock_timeout.
-        "SET LOCAL lock_timeout = '500ms';",
         "SET LOCAL statement_timeout = '15min';",
+        # Neither lock blocks readers, so they may wait past the server's 1 s
+        # deadlock_timeout, which cancels an autovacuum holding either table.
+        "SET LOCAL lock_timeout = '3s';",
+        f"LOCK TABLE public.{n['new']} IN ACCESS EXCLUSIVE MODE;",
         f"LOCK TABLE public.{table} IN SHARE MODE;",
         f"INSERT INTO public.{n['new']} SELECT * FROM public.{table} WHERE snapshot_date >= {b}::date;",
+        # The exclusive parent or table lock below blocks readers, so it gives up
+        # quickly (below deadlock_timeout) and the swap retries.
+        "SET LOCAL lock_timeout = '500ms';",
     ]
     if table == COMPOSITE:
         lines += [
@@ -338,6 +345,7 @@ def swap_sql(table: str, entry: dict) -> str:
             f"ALTER INDEX public.{PARENT_BRIN} ATTACH PARTITION public.{n['brin']};",
         ]
     lines += [
+        f"ALTER TABLE public.{table} RESET (autovacuum_enabled);",
         f"""INSERT INTO rank_history_retention_state (scope, retained_cutoff, updated_at)
 VALUES ({quote(n['scope'])}, {quote(entry['cutoff'])}::date, now())
 ON CONFLICT (scope) DO UPDATE SET

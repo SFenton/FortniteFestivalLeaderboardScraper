@@ -45,9 +45,12 @@ smallest partition first and composite last:
    must match the source, and there is exactly one boundary row per account.
    Rows dated before the build day are never written again, so the build
    needs no lock.
-2. **swap** (fetch window only): one transaction with `lock_timeout = 500ms`
-   takes a `SHARE` lock on the table, copies rows dated on or after the build
-   day, then exchanges names. A partition is detached and the replacement
+2. **swap** (fetch window only): one transaction locks the replacement
+   exclusively and takes a `SHARE` lock on the table, waiting up to 3 s so the
+   server cancels any autovacuum holding them (the replacement is built with
+   autovacuum off, re-enabled here). It copies rows dated on or after the
+   build day, then exchanges names with a 500 ms lock timeout, because those
+   locks block readers. A partition is detached and the replacement
    attached (the bound `CHECK` skips the attach scan), and its BRIN index is
    attached to the parent's `ix_rh_retention_cutoff_brin`. Composite's
    renamed BRIN index becomes `ix_crh_retention_cutoff_brin`. The same

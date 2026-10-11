@@ -143,6 +143,8 @@ SELECT 'late' || k, current_date, k FROM generate_series(1, 5) k;""")
             assert psql("SELECT count(*) FROM pg_inherits WHERE inhparent = 'rank_history'::regclass;") == "9"
             assert psql("SELECT indisvalid FROM pg_index WHERE indexrelid = 'ix_rh_retention_cutoff_brin'::regclass;") == "t"
             assert psql("SELECT count(*) FROM pg_constraint WHERE conname LIKE '%_rtn_bound';") == "0"
+            assert psql("SELECT count(*) FROM pg_class WHERE relname ~ '^(rank_history|composite_rank_history)' "
+                        "AND array_to_string(reloptions, ',') LIKE '%autovacuum_enabled%';") == "0"
             assert psql("SELECT count(*) FROM rank_history_retention_state "
                         f"WHERE retained_cutoff = current_date - {RETENTION};") == "10"
             assert psql("SELECT count(*) FROM rank_history WHERE account_id LIKE 'late%';") == "5"
