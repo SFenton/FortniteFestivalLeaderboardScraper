@@ -1301,7 +1301,8 @@ public sealed class RankingsCalculator
                 RebuildBandTeamRankingsWithDeadlockRetry(
                     bandType,
                     totalChartedSongs,
-                    _bandTeamRankingOptions);
+                    _bandTeamRankingOptions.WithComputeRowFingerprints(
+                        _bandRankHistoryOptions.Mode != BandRankHistoryMode.Disabled));
 
                 perBandSw.Stop();
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
