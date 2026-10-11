@@ -884,6 +884,14 @@ take about 43% more heap, and same-day updates write fewer index entries, less
 WAL and fewer dead tuples. `ALTER TABLE <table> RESET (fillfactor)` reverts a
 table; rows already written keep their layout.
 
+On 2026-10-11, the first day written with the new layout, the intra-day
+scrapes `1528` and `1529` updated 74 to 87% of history rows in place
+(`composite_rank_history` 78%). Primary-key indexes grew by about 0.01 GB per
+partition, against 1.2 GB for `rank_history_solo_bass` in scrape `1527`, when
+44% were in place. The `*_latest` tables update 100% in place. Snapshot wall
+time did not improve (675 to 708 seconds, composite 369 to 406), so the
+benefit is index growth, WAL and dead tuples rather than speed.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a
