@@ -83,7 +83,8 @@ public sealed class LeaderboardRivalsCalculator
         int accountBatchSize,
         bool rankingsAuthoritative = false,
         Action<string, int>? onPairComplete = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int instrumentParallelism = 1)
     {
         ArgumentNullException.ThrowIfNull(userIds);
         var normalizedUserIds =
@@ -107,8 +108,11 @@ public sealed class LeaderboardRivalsCalculator
         var completedPairs = 0;
         var totalRivals = 0;
         var totalSamples = 0;
+        // Serializes pair completion so callers see one callback at a time with a
+        // monotonically increasing count, as in the sequential path.
+        var completionLock = new object();
 
-        foreach (var instrument in instrumentKeys)
+        void ComputeInstrumentBatches(string instrument)
         {
             foreach (var accountBatch in
                      normalizedUserIds.Chunk(
@@ -139,16 +143,21 @@ public sealed class LeaderboardRivalsCalculator
                             instrumentResult,
                             rankingsAuthoritative))
                     {
-                        totalRivals +=
-                            instrumentResult.Rivals.Count;
-                        totalSamples +=
-                            instrumentResult.Samples.Count;
+                        Interlocked.Add(
+                            ref totalRivals,
+                            instrumentResult.Rivals.Count);
+                        Interlocked.Add(
+                            ref totalSamples,
+                            instrumentResult.Samples.Count);
                     }
 
-                    completedPairs++;
-                    onPairComplete?.Invoke(
-                        userId,
-                        completedPairs);
+                    lock (completionLock)
+                    {
+                        completedPairs++;
+                        onPairComplete?.Invoke(
+                            userId,
+                            completedPairs);
+                    }
                 }
 
                 stopwatch.Stop();
@@ -158,9 +167,39 @@ public sealed class LeaderboardRivalsCalculator
                     accountBatch.Length,
                     batch.ProfileAccountCount,
                     batch.ScoreCount,
-                    completedPairs,
+                    Volatile.Read(ref completedPairs),
                     totalPairs,
                     stopwatch.Elapsed.TotalSeconds);
+            }
+        }
+
+        var maxParallelInstruments = Math.Clamp(
+            instrumentParallelism,
+            1,
+            Math.Max(1, instrumentKeys.Length));
+        if (maxParallelInstruments == 1)
+        {
+            foreach (var instrument in instrumentKeys)
+                ComputeInstrumentBatches(instrument);
+        }
+        else
+        {
+            try
+            {
+                Parallel.ForEach(
+                    instrumentKeys,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = maxParallelInstruments,
+                        CancellationToken = ct,
+                    },
+                    ComputeInstrumentBatches);
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                    .Capture(ex.InnerExceptions[0])
+                    .Throw();
             }
         }
 
