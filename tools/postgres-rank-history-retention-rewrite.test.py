@@ -139,6 +139,24 @@ class FinalizeBrinTests(unittest.TestCase):
             self.run_finalize(["missing", "invalid"], "t")
 
 
+class RunFinalizeTests(unittest.TestCase):
+    def test_run_retries_parent_finalization_until_valid(self):
+        swapped = {t: {"status": "swapped"} for t in rewrite.TABLES}
+        states, calls, sleeps = iter(["invalid", "invalid", "valid"]), [], []
+
+        def finalize(args):
+            calls.append(args)
+            if len(calls) == 1:
+                raise rewrite.TransientRefusal("outside the network-bound fetch window")
+
+        args = argparse.Namespace(tables=None, max_hours=1, poll_seconds=7)
+        with Patch(rewrite, load_manifest=lambda: swapped, parent_brin_state=lambda: next(states),
+                   command_finalize_brin=finalize), Patch(rewrite.time, sleep=sleeps.append):
+            self.assertEqual(rewrite.command_run(args), 0)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [7])
+
+
 class RetryTests(unittest.TestCase):
     def test_lock_timeouts_retry_then_refuse(self):
         calls, sleeps = [], []

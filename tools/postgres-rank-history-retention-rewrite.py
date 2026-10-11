@@ -354,7 +354,8 @@ def swap_sql(table: str, entry: dict) -> str:
         "BEGIN;",
         "SET LOCAL statement_timeout = '15min';",
         # Neither lock blocks readers, so they may wait past the server's 1 s
-        # deadlock_timeout, which cancels an autovacuum holding either table.
+        # deadlock_timeout, after which the waiter cancels a blocking autovacuum
+        # (not an anti-wraparound one; that case retries and defers).
         "SET LOCAL lock_timeout = '3s';",
         f"LOCK TABLE public.{n['new']} IN ACCESS EXCLUSIVE MODE;",
         f"LOCK TABLE public.{table} IN SHARE MODE;",
@@ -488,6 +489,15 @@ def command_run(args: argparse.Namespace) -> int:
             except TransientRefusal as refusal:
                 print(f"{retire.utcnow()} waiting: {refusal}", flush=True)
                 time.sleep(args.poll_seconds)
+    while all_partitions_swapped(load_manifest()) and parent_brin_state() != "valid":
+        if time.monotonic() > deadline:
+            print(f"{retire.utcnow()} stopping: --max-hours reached before {PARENT_BRIN} was valid", flush=True)
+            return 3
+        try:
+            command_finalize_brin(args)
+        except TransientRefusal as refusal:
+            print(f"{retire.utcnow()} waiting: {refusal}", flush=True)
+            time.sleep(args.poll_seconds)
     return 0
 
 
