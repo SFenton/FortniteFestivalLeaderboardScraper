@@ -388,6 +388,37 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void LegacyCompatibleCurrentState_ResolvesLegacySnapshotAndOverlayPrecedence()
+    {
+        InsertScrape(42);
+        InsertSnapshotEntry(42, "song-current", "acct-current", 100_000, "scrape");
+        InsertSnapshotEntry(42, "song-current", "acct-snapshot", 95_000, "scrape");
+        InsertSnapshotState("song-current", 42, isFinalized: true);
+        InsertOverlayEntry("song-current", "acct-current", 120_000, "backfill", 200, "test");
+        InsertOverlayEntry("song-overlay-only", "acct-overlay", 90_000, "backfill", 200, "test");
+        Db.UpsertEntries("song-current", [MakeEntry("acct-legacy-conflict", 999_000)]);
+        Db.UpsertEntries("song-legacy-only", [MakeEntry("acct-legacy-1", 888_000), MakeEntry("acct-legacy-2", 777_000)]);
+        Db.UpsertEntries("song-legacy-overlay", [MakeEntry("acct-a", 500_000), MakeEntry("acct-b", 400_000)]);
+        InsertOverlayEntry("song-legacy-overlay", "acct-a", 510_000, "backfill", 200, "test");
+        Assert.False(Db.UseSnapshotOverlayWorkerReaders);
+
+        var counts = Db.GetCurrentStateAllSongCounts();
+
+        Assert.Equal(4, counts.Count);
+        Assert.Equal(2, counts["song-current"]);
+        Assert.Equal(1, counts["song-overlay-only"]);
+        Assert.Equal(2, counts["song-legacy-only"]);
+        Assert.Equal(2, counts["song-legacy-overlay"]);
+        // The overlay score (120,000) replaces the snapshot score, and the legacy
+        // row of a song with a finalized snapshot is ignored.
+        Assert.Equal(1, Db.GetCurrentStatePopulationAtOrBelow("song-current", 99_999));
+        Assert.Equal(2, Db.GetCurrentStatePopulationAtOrBelow("song-current", 999_999));
+        // The overlay score (510,000) replaces the legacy score (500,000).
+        Assert.Equal(1, Db.GetCurrentStatePopulationAtOrBelow("song-legacy-overlay", 505_000));
+        Assert.Equal(2, Db.GetCurrentStatePopulationAtOrBelow("song-legacy-only", 900_000));
+    }
+
+    [Fact]
     public void SnapshotOverlayWorkerReaders_BulkProfilesRecomputeRanksAfterOverlayResolution()
     {
         InsertScrape(42);
