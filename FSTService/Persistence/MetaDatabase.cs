@@ -8536,7 +8536,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         return cmd.ExecuteNonQuery();
     }
 
-    private static string BuildBandTeamRankingInsertSql(string targetTable, string whereClause, string orderByClause) => $@"
+    private static string BuildBandTeamRankingInsertSql(string targetTable, string whereClause, string orderByClause, bool computeRowFingerprints) => $@"
                 INSERT INTO {BandRankingStorageNames.QuoteIdentifier(targetTable)} (
                     band_type, ranking_scope, combo_id, team_key, team_members,
                     songs_played, total_charted_songs, coverage, raw_skill_rating,
@@ -8550,7 +8550,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
                     source.adjusted_skill_rating, source.adjusted_skill_rank, source.weighted_rating, source.weighted_rank,
                     source.fc_rate, source.fc_rate_rank, source.total_score, source.total_score_rank, source.avg_accuracy,
                     source.full_combo_count, source.avg_stars, source.best_rank, source.avg_rank, source.raw_weighted_rating, source.computed_at,
-                    @rankingGeneration, {BandRankHistoryFingerprintExpression("source")}
+                    @rankingGeneration, {(computeRowFingerprints ? BandRankHistoryFingerprintExpression("source") : "''")}
                 FROM _band_rank_results source
                 {whereClause}
                 {orderByClause};";
@@ -8559,7 +8559,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
     {
         using var cmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(cmd, tx, options);
-        cmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, string.Empty, "ORDER BY ranking_scope, combo_id, team_key");
+        cmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, string.Empty, "ORDER BY ranking_scope, combo_id, team_key", options.ComputeRowFingerprints);
         cmd.Parameters.AddWithValue("rankingGeneration", rankingGeneration);
         return cmd.ExecuteNonQuery();
     }
@@ -8571,7 +8571,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         using (var cmd = conn.CreateCommand())
         {
             ConfigureBandRebuildCommand(cmd, tx, options);
-            cmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'overall'", "ORDER BY team_key");
+            cmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'overall'", "ORDER BY team_key", options.ComputeRowFingerprints);
             cmd.Parameters.AddWithValue("rankingGeneration", rankingGeneration);
             insertedRows += cmd.ExecuteNonQuery();
         }
@@ -8609,7 +8609,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
 
         using var insertCmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(insertCmd, tx, options);
-        insertCmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
+        insertCmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key", options.ComputeRowFingerprints);
         insertCmd.Parameters.AddWithValue("rankingGeneration", rankingGeneration);
         var comboIdParam = insertCmd.Parameters.Add("comboId", NpgsqlDbType.Text);
 

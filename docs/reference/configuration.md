@@ -483,6 +483,7 @@ on-demand and maintenance-lease paths.
 | `BandTeamRankings:WriteMode` | `ComboBatched` | Insert overall rows, then each combo's rows in its own statement (`Monolithic` inserts all rows in one statement) |
 | `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
 | `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
+| `BandTeamRankings:ComputeRowFingerprints` | `true` | Store each ranking row's band rank-history fingerprint during the rebuild. The worker overrides it: it is off whenever `BandRankHistory:Mode` is `Disabled`, and on otherwise |
 | `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
 | `Scraper:StartRankHistorySnapshotsAfterInstrumentRankings` | `false` | With the overlap option on, start the snapshot and band-ranking branches right after per-instrument rankings, concurrently with composite, solo family, and combo rankings; see below |
 | `Scraper:UseRankHistoryLatestState` | `false` | Compare rank-history snapshots against the maintained latest row per account instead of scanning each instrument's and the composite's whole history; see below |
@@ -573,6 +574,13 @@ scope's readiness, and the next enabled snapshot rebuilds it. Retention cleanup
 never deletes an account's newest history row, so it does not affect the
 latest rows. The tables are created on first use, so no deploy hook is needed.
 `false` is the rollback.
+
+Each ranking row carries `row_fingerprint`, an md5 over its metrics that band
+rank-history snapshots compare against their latest row. With band rank history
+`Disabled` (production), the rebuild stores an empty fingerprint instead; a
+later history snapshot computes empty fingerprints itself, giving the same
+value. Computing it cost about 2.4 µs per row, about 52 CPU-seconds across
+the 21.6 million band ranking rows of a scrape.
 
 `ComboBatched` was adopted when disk headroom was tight (a single monolithic
 insert once failed with `No space left on device`). Its per-combo statements
