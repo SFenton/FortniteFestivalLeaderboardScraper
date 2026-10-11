@@ -108,9 +108,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// <summary>Below this entry count, use the prepared-statement loop. Above, use COPY + merge.</summary>
     internal const int BulkThreshold = 50;
 
-    internal const int RankHistoryCleanupBatchSize = 5000;
-    internal const int RankHistoryCleanupMaxBatches = 1;
-
     private bool MustBypassCurrentProjection =>
         BypassCurrentProjectionForMaintenance
         || UseSnapshotOverlayWorkerReaders
@@ -2887,7 +2884,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return rows;
     }
 
-    public int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true, bool useLatestState = false)
+    public int SnapshotRankHistory(int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays, bool cleanupRetention = true, bool useLatestState = false)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         // The latest-state path relies on ON CONFLICT, so legacy schemas without the
@@ -3197,61 +3194,60 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return Convert.ToInt32(count.ExecuteScalar());
     }
 
-    public int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = RankHistoryCleanupBatchSize, int maxBatches = RankHistoryCleanupMaxBatches)
+    public int CleanupRankHistoryRetention(
+        int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays,
+        int commandTimeoutSeconds = 0)
     {
-        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
-        if (maxBatches <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatches));
+        if (retentionDays <= 0)
+            return 0;
 
-        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
-        int totalDeleted = 0;
+        var cutoff = RankHistoryRetention.Cutoff(retentionDays);
+        var scope = RankHistoryRetention.SoloScope(Instrument);
 
         using var conn = _ds.OpenConnection();
-        for (int batch = 0; batch < maxBatches; batch++)
+        using var tx = conn.BeginTransaction();
+        var decision = RankHistoryRetention.Decide(
+            conn,
+            tx,
+            scope,
+            GetPartitionName("rank_history"),
+            cutoff);
+        if (decision == RankHistoryRetention.RetentionDecision.UpToDate)
+            return 0;
+        if (decision == RankHistoryRetention.RetentionDecision.NeedsRewrite)
         {
-            using var tx = conn.BeginTransaction();
-            using var c = conn.CreateCommand();
-            c.Transaction = tx;
-            c.CommandTimeout = 0;
-            c.CommandText = @"
-                WITH doomed AS (
-                    SELECT account_id, snapshot_date
-                    FROM (
-                        SELECT
-                            account_id,
-                            snapshot_date,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY account_id
-                                ORDER BY snapshot_date DESC
-                            ) AS recency
-                        FROM rank_history
-                        WHERE instrument = @instrument
-                          AND snapshot_date <= @cutoff
-                    ) ranked
-                    WHERE recency > 1
-                    ORDER BY snapshot_date ASC, account_id ASC
-                    LIMIT @batchSize
-                )
-                DELETE FROM rank_history rh
-                USING doomed d
-                WHERE rh.instrument = @instrument
-                  AND rh.account_id = d.account_id
-                  AND rh.snapshot_date = d.snapshot_date";
-            c.Parameters.AddWithValue("instrument", Instrument);
-            c.Parameters.AddWithValue("cutoff", cutoff);
-            c.Parameters.AddWithValue("batchSize", batchSize);
-
-            int deleted = c.ExecuteNonQuery();
-            tx.Commit();
-            totalDeleted += deleted;
-
-            if (deleted == 0)
-                break;
+            _log.LogWarning(
+                "Rank history retention for {Instrument} is not initialized and the table is large; run tools/postgres-rank-history-retention-rewrite.py instead of deleting it row by row.",
+                Instrument);
+            return 0;
         }
 
-        if (totalDeleted > 0)
-            _log.LogDebug("Trimmed {DeletedCount} retained rank_history rows for {Instrument}.", totalDeleted, Instrument);
+        // Keep every row after the cutoff and each account's newest row at or
+        // before it; delete the older rows that a newer kept row supersedes.
+        using var c = conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandTimeout = Math.Max(0, commandTimeoutSeconds);
+        c.CommandText = @"
+            DELETE FROM rank_history rh
+            WHERE rh.instrument = @instrument
+              AND rh.snapshot_date < @cutoff
+              AND EXISTS (
+                  SELECT 1
+                  FROM rank_history newer
+                  WHERE newer.instrument = @instrument
+                    AND newer.account_id = rh.account_id
+                    AND newer.snapshot_date > rh.snapshot_date
+                    AND newer.snapshot_date <= @cutoff)";
+        c.Parameters.AddWithValue("instrument", Instrument);
+        c.Parameters.Add("cutoff", NpgsqlDbType.Date).Value = cutoff;
+        var deleted = c.ExecuteNonQuery();
+        RankHistoryRetention.RecordRetainedCutoff(conn, tx, scope, cutoff);
+        tx.Commit();
 
-        return totalDeleted;
+        if (deleted > 0)
+            _log.LogDebug("Trimmed {DeletedCount} retained rank_history rows for {Instrument}.", deleted, Instrument);
+
+        return deleted;
     }
 
     public (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50)

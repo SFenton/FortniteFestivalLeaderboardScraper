@@ -17,6 +17,7 @@ sources:
   - docs/database/SnapshotGenerationOfflineRetentionReport.md
   - docs/database/SnapshotGenerationDropRunbook.md
   - docs/database/SnapshotGenerationArchiveRetirementRunbook.md
+  - docs/database/RankHistoryRetentionRewriteRunbook.md
   - docs/database/PublicationPathArtifactSnapshots.md
 update_triggers:
   - Any canonical document is added, moved, or removed.
@@ -40,6 +41,7 @@ evidence remain the behavioral sources of truth.
 | Produce current retention evidence after an external idle stop | [Offline snapshot-generation retention report](database/SnapshotGenerationOfflineRetentionReport.md) |
 | Execute the gated snapshot-generation DROP/restore canary | [Snapshot generation DROP and logical restore](database/SnapshotGenerationDropRunbook.md) |
 | Reclaim space from unreferenced snapshot generations | [Snapshot generation archive retirement](database/SnapshotGenerationArchiveRetirementRunbook.md) |
+| Reduce rank history to the retention window | [Rank-history retention rewrite](database/RankHistoryRetentionRewriteRunbook.md) |
 | Understand immutable replay evidence packages | [Replay evidence artifacts](architecture/replay-artifacts.md) |
 | Work on the React application | [Web app](components/web-app.md) |
 | Work on HTTP serving and API behavior | [Service and API](components/service-api.md) |
@@ -76,6 +78,7 @@ again. Verify their preconditions and current code before execution.
 - [Max-score correction maintenance](database/MaxScoreCorrectionMaintenanceRunbook.md)
 - [Pro-bass snapshot archive/rewrite pilot](database/ProBassSnapshotRewritePilot.md)
 - [Publication path artifact snapshots](database/PublicationPathArtifactSnapshots.md)
+- [Rank-history retention rewrite](database/RankHistoryRetentionRewriteRunbook.md)
 - [Score-history deduplication maintenance](database/ScoreHistoryDedupMaintenanceRunbook.md)
 - [Snapshot generation partition migration](database/SnapshotGenerationPartitionMigration.md)
 - [Snapshot generation archive retirement](database/SnapshotGenerationArchiveRetirementRunbook.md)

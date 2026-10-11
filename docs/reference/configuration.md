@@ -141,6 +141,22 @@ is retained and the scheduled scrape may proceed without recording a cycle.
 It must be enabled only for a later coordinator-owned observation window. See
 [Snapshot generation retention safety](../database/SnapshotGenerationRetentionSafety.md).
 
+## Rank-history retention
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `DatabaseMaintenance:RankHistoryRetentionDays` | `30` | Days of solo and composite rank history the post-publication cleanup keeps; each account also keeps its newest row at or before the cutoff |
+| `DatabaseMaintenance:RankHistoryRetentionCommandTimeoutSeconds` | `900` | Statement timeout for each table's daily retention delete; `0` waits indefinitely |
+
+The cleanup is not pressure-gated: it deletes once per UTC day per table, when
+the cutoff advances past `rank_history_retention_state`. It refuses a table
+over 20 million estimated rows that has no state row; the
+[rewrite runbook](../database/RankHistoryRetentionRewriteRunbook.md) reduces
+such a table first. `RankHistoryCleanupBatchSize` and
+`RankHistoryCleanupMaxBatches` were removed. Band rank history keeps
+`BandRankHistory:RetentionDays` and the batch keys
+`DatabaseMaintenance:BandRankHistoryCleanup*`.
+
 ## Publication API cache safety bounds
 
 Freeze-safe cache coverage is code-owned rather than a deployment feature flag.

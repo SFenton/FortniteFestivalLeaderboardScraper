@@ -892,6 +892,30 @@ partition, against 1.2 GB for `rank_history_solo_bass` in scrape `1527`, when
 time did not improve (675 to 708 seconds, composite 369 to 406), so the
 benefit is index growth, WAL and dead tuples rather than speed.
 
+### Rank-history retention
+
+Solo and composite rank history keep 30 days
+(`DatabaseMaintenance:RankHistoryRetentionDays`; see
+[ADR 0013](../decisions/0013-rank-history-30-day-retention.md)). The cutoff is
+UTC today minus the window. A table keeps every row dated after the cutoff and
+each account's newest row at or before it, so the latest-row invariant above
+holds and a 30-day chart has a starting point. Readers ask for 30 days by
+default; the player data export gets what is retained.
+
+`rank_history_retention_state` holds one row per scope (`solo:<instrument>` or
+`composite`) with the last cutoff applied. The post-publication cleanup
+deletes a scope's superseded rows only when the cutoff has advanced past that
+row, in one statement per table, and then records the new cutoff, so only the
+first scrape after UTC midnight deletes anything. A scope with no row and more
+than 20 million estimated rows is refused with a warning; the
+[rewrite runbook](../database/RankHistoryRetentionRewriteRunbook.md) reduces
+it by copy-swap instead of deleting most of the table row by row. BRIN indexes
+on `snapshot_date` (`ix_rh_retention_cutoff_brin` on the `rank_history`
+parent and `ix_crh_retention_cutoff_brin` on composite) serve the delete's
+range scan. The schema initializer creates them only below 20 million
+estimated rows; the rewrite tool creates them on production-sized tables.
+Band rank history has its own `BandRankHistory:RetentionDays`.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a

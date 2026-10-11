@@ -99,6 +99,8 @@ sources:
   - tools/postgres-snapshot-archive-retire.test.py
   - tools/postgres-snapshot-sparse-compact.test.py
   - tools/postgres-snapshot-sparse-compact-drill.py
+  - tools/postgres-rank-history-retention-rewrite.test.py
+  - tools/postgres-rank-history-retention-rewrite-drill.py
   - tools/postgres-snapshot-generation-drop-drill.py
   - tools/capture-snapshot-generation-drop-health.py
   - tools/capture-publication-route-contract.sh
@@ -597,6 +599,18 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-snapshot-sparse-compact.test.py
 # Isolated end-to-end compaction drill (throwaway postgres:17, never production)
 python3 tools/postgres-snapshot-sparse-compact-drill.py \
   --work-root /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/sparse-compaction-drill-<run>
+```
+
+The rank-history retention rewrite (`tools/postgres-rank-history-retention-rewrite.py`)
+has unit tests for its swap and rollback SQL, scope names, lock-timeout retries,
+and window refusal. Its drill seeds a throwaway `postgres:17` with the
+production rank-history shape and runs build, a write between build and swap,
+swap, one rollback, archive, and drop, checking kept rows, partition and BRIN
+attachment, and retention state:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-rank-history-retention-rewrite.test.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-rank-history-retention-rewrite-drill.py
 ```
 
 Sparse compaction unit tests cover per-song and whole-child liveness blockers,

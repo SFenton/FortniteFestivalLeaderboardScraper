@@ -860,19 +860,11 @@ public sealed class PostScrapeOrchestrator
             }, ct));
         }
 
+        // Rank-history retention is not pressure-gated: it deletes only when its
+        // daily cutoff advances (one day's superseded rows per table), and
+        // autovacuum activity alone kept the generic gate closed every scrape.
         if (cleanupRankHistoryRetention)
-        {
-            var skipReason = await GetMaintenanceCleanupSkipReasonAsync(
-                "rank history retention",
-                ct);
-            if (skipReason is not null)
-            {
-                ReportSkippedCleanupItems(GlobalLeaderboardScraper.AllInstruments.Count + 1);
-                RecordSkippedPhase(ctx, "Cleanup.RankHistoryRetention", skipReason);
-            }
-            else
-                await RunPhaseAsync(ctx, "Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
-        }
+            await RunPhaseAsync(ctx, "Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
 
         if (cleanupBandRankHistoryRetention)
         {
@@ -1283,13 +1275,8 @@ public sealed class PostScrapeOrchestrator
     {
         var failures = new List<Exception>();
         var maintenanceOptions = _databaseMaintenanceOptions.Value;
-        var batchSize = PositiveOrDefault(
-            maintenanceOptions.RankHistoryCleanupBatchSize,
-            DatabaseMaintenanceOptions.DefaultCleanupBatchSize);
-        var maxBatches = PositiveOrDefault(
-            maintenanceOptions.RankHistoryCleanupMaxBatches,
-            DatabaseMaintenanceOptions.DefaultCleanupMaxBatches);
-        var commandTimeoutSeconds = Math.Max(0, maintenanceOptions.CleanupCommandTimeoutSeconds);
+        var retentionDays = maintenanceOptions.RankHistoryRetentionDays;
+        var commandTimeoutSeconds = Math.Max(0, maintenanceOptions.RankHistoryRetentionCommandTimeoutSeconds);
 
         foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
         {
@@ -1299,8 +1286,8 @@ public sealed class PostScrapeOrchestrator
             {
                 var db = _persistence.GetOrCreateInstrumentDb(instrument);
                 var deleted = await Task.Run(() => db.CleanupRankHistoryRetention(
-                    batchSize: batchSize,
-                    maxBatches: maxBatches), ct);
+                    retentionDays,
+                    commandTimeoutSeconds), ct);
                 if (deleted > 0)
                 {
                     _log.LogInformation(
@@ -1327,10 +1314,9 @@ public sealed class PostScrapeOrchestrator
         try
         {
             var deleted = await Task.Run(() => _persistence.Meta.CleanupCompositeRankHistoryRetention(
-                batchSize: batchSize,
-                maxBatches: maxBatches,
-                commandTimeoutSeconds: commandTimeoutSeconds,
-                ct: ct), ct);
+                retentionDays,
+                commandTimeoutSeconds,
+                ct), ct);
             if (deleted > 0)
             {
                 _log.LogInformation(

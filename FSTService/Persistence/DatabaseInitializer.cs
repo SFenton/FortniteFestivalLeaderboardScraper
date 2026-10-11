@@ -1674,6 +1674,28 @@ public static class DatabaseInitializer
             END LOOP;
         END $$;
 
+        -- Rank-history retention trims rows by snapshot_date once per day and records
+        -- the cutoff it reached per table. The BRIN index narrows that scan; it is
+        -- built here only for small tables (fresh installs), because a large
+        -- production table is rewritten and indexed by
+        -- tools/postgres-rank-history-retention-rewrite.py instead.
+        CREATE TABLE IF NOT EXISTS rank_history_retention_state (
+            scope            TEXT        PRIMARY KEY,
+            retained_cutoff  DATE        NOT NULL,
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        DO $$
+        BEGIN
+            IF to_regclass('public.ix_rh_retention_cutoff_brin') IS NULL
+               AND (SELECT COALESCE(SUM(GREATEST(c.reltuples, 0)), 0)
+                    FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+                    WHERE i.inhparent = 'rank_history'::regclass) < 20000000
+            THEN
+                CREATE INDEX ix_rh_retention_cutoff_brin ON rank_history
+                    USING brin (snapshot_date) WITH (pages_per_range = 128, autosummarize = on);
+            END IF;
+        END $$;
+
         CREATE TABLE IF NOT EXISTS rank_history_snapshot_stats (
             instrument              TEXT        NOT NULL,
             snapshot_date           DATE        NOT NULL,
@@ -3116,6 +3138,15 @@ public static class DatabaseInitializer
                   AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
             THEN
                 ALTER TABLE composite_rank_history SET (fillfactor=70);
+            END IF;
+        END $$;
+        DO $$
+        BEGIN
+            IF to_regclass('public.ix_crh_retention_cutoff_brin') IS NULL
+               AND (SELECT GREATEST(reltuples, 0) FROM pg_class WHERE oid = 'composite_rank_history'::regclass) < 20000000
+            THEN
+                CREATE INDEX ix_crh_retention_cutoff_brin ON composite_rank_history
+                    USING brin (snapshot_date) WITH (pages_per_range = 128, autosummarize = on);
             END IF;
         END $$;
 
