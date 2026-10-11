@@ -98,6 +98,37 @@ PYTHONDONTWRITEBYTECODE=1 python3 $T drop
 Watch the API, `pg_locks`, and the scrape while each swap runs. Deploy the
 30-day worker once every table is swapped.
 
+## Production run (2026-10-11)
+
+Build day 2026-10-11, cutoff 2026-09-11, during the fetch windows of scrapes
+`1539` and `1540`:
+
+| Table | Rows before | Rows kept | Replacement |
+|---|---:|---:|---:|
+| `rank_history_pro_cymbals` | 592,313 | 154,942 | 0.0 GB |
+| `rank_history_pro_drums` | 942,670 | 244,194 | 0.1 GB |
+| `rank_history_pro_guitar` | 72,965,670 | 14,604,072 | 3.7 GB |
+| `rank_history_solo_vocals` | 91,013,160 | 19,476,430 | 4.6 GB |
+| `rank_history_solo_drums` | 109,956,979 | 24,367,501 | 5.5 GB |
+| `rank_history_solo_guitar` | 108,388,220 | 23,625,674 | 5.6 GB |
+| `rank_history_pro_vocals` | 150,847,371 | 36,203,122 | 9.4 GB |
+| `rank_history_solo_bass` | 175,546,549 | 38,065,031 | 8.6 GB |
+| `rank_history_pro_bass` | 200,808,612 | 40,873,810 | 10.4 GB |
+| `composite_rank_history` | 570,932,609 | 122,508,172 | 17.6 GB |
+
+Rows before and kept are dated before the build day; each swap then copied
+that day's rows (up to 4.7 million for composite). The tables held 390.8 GB
+before. Partition builds took up to 8 minutes, composite 17 minutes; swaps
+took 1 to 100 seconds, each in one attempt except `rank_history_pro_vocals` (four, an autovacuum on the
+replacement, since fixed). On PostgreSQL 17.9 the parent BRIN index stayed
+invalid after the last partition swap until `finalize-brin` rebuilt it.
+
+Checks after the swaps: every `rank_history_latest` and
+`composite_rank_history_latest` row has its history row (0 missing across
+all 10 scopes); no account has more than one row dated at or before the
+cutoff; the history API returns rows from 2026-09-11 on. Scrape `1540` ran on
+the 30-day worker and passed leaderboard and band fetch.
+
 ## Rollback
 
 Before `drop`, `rollback <table>` restores the original. It first gives the
