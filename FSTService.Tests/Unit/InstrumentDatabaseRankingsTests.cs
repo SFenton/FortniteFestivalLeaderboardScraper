@@ -622,26 +622,90 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
     public void CleanupRankHistoryRetention_PreservesNewestSnapshotAtOrBeforeCutoff()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var cutoff = today.AddDays(-365);
+        var cutoff = today.AddDays(-DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays);
 
         InsertRankHistoryRow("p1", cutoff.AddDays(-20), 5, 500);
         InsertRankHistoryRow("p1", cutoff.AddDays(-10), 4, 600);
         InsertRankHistoryRow("p1", cutoff, 3, 700);
         InsertRankHistoryRow("p1", cutoff.AddDays(3), 2, 800);
         InsertRankHistoryRow("p2", cutoff.AddDays(-30), 9, 400);
+        InsertRankHistoryRow("p3", cutoff.AddDays(-5), 8, 450);
+        InsertRankHistoryRow("p3", cutoff.AddDays(1), 7, 460);
 
-        var deleted = Db.CleanupRankHistoryRetention(batchSize: 100, maxBatches: 10);
+        var deleted = Db.CleanupRankHistoryRetention();
 
         Assert.Equal(2, deleted);
         Assert.Equal([cutoff, cutoff.AddDays(3)], GetStoredSnapshotDates("p1"));
         Assert.Equal([cutoff.AddDays(-30)], GetStoredSnapshotDates("p2"));
+        Assert.Equal([cutoff.AddDays(-5), cutoff.AddDays(1)], GetStoredSnapshotDates("p3"));
+    }
+
+    [Fact]
+    public void CleanupRankHistoryRetention_RunsOncePerCutoffAndRecordsIt()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var cutoff = today.AddDays(-30);
+        InsertRankHistoryRow("p1", cutoff.AddDays(-2), 5, 500);
+        InsertRankHistoryRow("p1", cutoff.AddDays(-1), 4, 600);
+
+        Assert.Equal(1, Db.CleanupRankHistoryRetention(retentionDays: 30));
+        Assert.Equal(cutoff, GetRetainedCutoff($"solo:{Db.Instrument}"));
+
+        // Same cutoff: no scan, even if older superseded rows appear.
+        InsertRankHistoryRow("p2", cutoff.AddDays(-3), 9, 400);
+        InsertRankHistoryRow("p2", cutoff.AddDays(-1), 8, 410);
+        Assert.Equal(0, Db.CleanupRankHistoryRetention(retentionDays: 30));
+
+        // A later cutoff (shorter window here) trims again.
+        Assert.Equal(1, Db.CleanupRankHistoryRetention(retentionDays: 29));
+        Assert.Equal([cutoff.AddDays(-1)], GetStoredSnapshotDates("p1"));
+        Assert.Equal([cutoff.AddDays(-1)], GetStoredSnapshotDates("p2"));
+        Assert.Equal(today.AddDays(-29), GetRetainedCutoff($"solo:{Db.Instrument}"));
+    }
+
+    [Fact]
+    public void RankHistoryRetention_LargeUninitializedTableNeedsRewrite()
+    {
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-30);
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        Assert.Equal(
+            RankHistoryRetention.RetentionDecision.Delete,
+            RankHistoryRetention.Decide(conn, tx, "solo:test", "rank_history_solo_guitar", cutoff));
+        Assert.Equal(
+            RankHistoryRetention.RetentionDecision.NeedsRewrite,
+            RankHistoryRetention.Decide(conn, tx, "solo:test", "rank_history_solo_guitar", cutoff, uninitializedMaxEstimatedRows: -1));
+
+        RankHistoryRetention.RecordRetainedCutoff(conn, tx, "solo:test", cutoff.AddDays(-1));
+        Assert.Equal(
+            RankHistoryRetention.RetentionDecision.Delete,
+            RankHistoryRetention.Decide(conn, tx, "solo:test", "rank_history_solo_guitar", cutoff, uninitializedMaxEstimatedRows: -1));
+        RankHistoryRetention.RecordRetainedCutoff(conn, tx, "solo:test", cutoff);
+        Assert.Equal(
+            RankHistoryRetention.RetentionDecision.UpToDate,
+            RankHistoryRetention.Decide(conn, tx, "solo:test", "rank_history_solo_guitar", cutoff));
+    }
+
+    private DateOnly? GetRetainedCutoff(string scope)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT retained_cutoff FROM rank_history_retention_state WHERE scope = @scope";
+        cmd.Parameters.AddWithValue("scope", scope);
+        return cmd.ExecuteScalar() switch
+        {
+            DateOnly date => date,
+            DateTime dateTime => DateOnly.FromDateTime(dateTime),
+            _ => null,
+        };
     }
 
     [Fact]
     public void SnapshotRankHistory_CleanupRetentionCanBeSkipped()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var cutoff = today.AddDays(-365);
+        var cutoff = today.AddDays(-DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays);
 
         InsertRankHistoryRow("p1", cutoff.AddDays(-20), 5, 500);
         InsertRankHistoryRow("p1", cutoff.AddDays(-10), 4, 600);
@@ -655,7 +719,7 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
 
         Assert.Equal([cutoff.AddDays(-20), cutoff.AddDays(-10), today], GetStoredSnapshotDates("p1"));
 
-        var deleted = Db.CleanupRankHistoryRetention(batchSize: 100, maxBatches: 10);
+        var deleted = Db.CleanupRankHistoryRetention();
 
         Assert.Equal(1, deleted);
         Assert.Equal([cutoff.AddDays(-10), today], GetStoredSnapshotDates("p1"));

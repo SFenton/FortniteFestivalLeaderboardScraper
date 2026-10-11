@@ -7171,7 +7171,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
         return (above, self, below);
     }
 
-    public void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true, bool useLatestState = false)
+    public void SnapshotCompositeRankHistory(int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays, bool cleanupRetention = true, bool useLatestState = false)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         if (useLatestState)
@@ -7307,84 +7307,82 @@ public sealed partial class MetaDatabase : IMetaDatabase
     }
 
     public int CleanupCompositeRankHistoryRetention(
-        int retentionDays = 365,
-        int batchSize = 5000,
-        int maxBatches = 1,
+        int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays,
         int commandTimeoutSeconds = 0,
         CancellationToken ct = default)
     {
-        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
-        if (maxBatches <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatches));
-
         using var conn = _ds.OpenConnection();
-        var totalDeleted = 0;
-
-        for (var batch = 0; batch < maxBatches; batch++)
-        {
-            ct.ThrowIfCancellationRequested();
-            using var tx = conn.BeginTransaction();
-            var deleted = CleanupCompositeRankHistoryRetentionBatch(
-                conn,
-                tx,
-                retentionDays,
-                batchSize,
-                commandTimeoutSeconds,
-                ct);
-            tx.Commit();
-            totalDeleted += deleted;
-
-            if (deleted < batchSize)
-                break;
-        }
-
-        return totalDeleted;
-    }
-
-    private static int CleanupCompositeRankHistoryRetention(NpgsqlConnection conn, NpgsqlTransaction tx, int retentionDays)
-        => CleanupCompositeRankHistoryRetentionBatch(
+        using var tx = conn.BeginTransaction();
+        var deleted = CleanupCompositeRankHistoryRetention(
             conn,
             tx,
             retentionDays,
-            FSTService.DatabaseMaintenanceOptions.DefaultCleanupBatchSize,
-            commandTimeoutSeconds: 0,
-            ct: default);
+            commandTimeoutSeconds,
+            ct,
+            out var needsRewrite);
+        tx.Commit();
+        if (needsRewrite)
+        {
+            _log.LogWarning(
+                "Composite rank history retention is not initialized and the table is large; run tools/postgres-rank-history-retention-rewrite.py instead of deleting it row by row.");
+        }
 
-    private static int CleanupCompositeRankHistoryRetentionBatch(
+        return deleted;
+    }
+
+    private static int CleanupCompositeRankHistoryRetention(NpgsqlConnection conn, NpgsqlTransaction tx, int retentionDays)
+        => CleanupCompositeRankHistoryRetention(
+            conn,
+            tx,
+            retentionDays,
+            commandTimeoutSeconds: 0,
+            ct: default,
+            out _);
+
+    private static int CleanupCompositeRankHistoryRetention(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         int retentionDays,
-        int batchSize,
         int commandTimeoutSeconds,
-        CancellationToken ct)
+        CancellationToken ct,
+        out bool needsRewrite)
     {
+        needsRewrite = false;
         if (retentionDays <= 0)
             return 0;
 
-        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
+        var cutoff = RankHistoryRetention.Cutoff(retentionDays);
+        var decision = RankHistoryRetention.Decide(
+            conn,
+            tx,
+            RankHistoryRetention.CompositeScope,
+            "composite_rank_history",
+            cutoff);
+        if (decision == RankHistoryRetention.RetentionDecision.UpToDate)
+            return 0;
+        if (decision == RankHistoryRetention.RetentionDecision.NeedsRewrite)
+        {
+            needsRewrite = true;
+            return 0;
+        }
+
+        // Keep every row after the cutoff and each account's newest row at or
+        // before it; the snapshot_date BRIN index narrows the candidate scan.
         using var c = conn.CreateCommand();
         c.Transaction = tx;
         ConfigureCommandTimeout(c, commandTimeoutSeconds);
         c.CommandText = @"
-            WITH doomed AS (
-                SELECT crh.ctid
-                FROM composite_rank_history crh
-                WHERE crh.snapshot_date < @cutoff
-                  AND EXISTS (
-                    SELECT 1 FROM composite_rank_history crh2
-                    WHERE crh2.account_id = crh.account_id
-                      AND crh2.snapshot_date > crh.snapshot_date
-                      AND crh2.snapshot_date <= @cutoff
-                  )
-                -- Keep the batch unordered so the cutoff BRIN can reject
-                -- empty ranges and LIMIT can stop after one bounded batch.
-                LIMIT @batchSize
-            )
             DELETE FROM composite_rank_history crh
-            USING doomed
-            WHERE crh.ctid = doomed.ctid";
-        c.Parameters.AddWithValue("cutoff", cutoff);
-        c.Parameters.AddWithValue("batchSize", batchSize);
-        return ExecuteNonQueryWithCancellation(c, ct);
+            WHERE crh.snapshot_date < @cutoff
+              AND EXISTS (
+                  SELECT 1 FROM composite_rank_history newer
+                  WHERE newer.account_id = crh.account_id
+                    AND newer.snapshot_date > crh.snapshot_date
+                    AND newer.snapshot_date <= @cutoff)";
+        c.Parameters.Add("cutoff", NpgsqlTypes.NpgsqlDbType.Date).Value = cutoff;
+        var deleted = ExecuteNonQueryWithCancellation(c, ct);
+        RankHistoryRetention.RecordRetainedCutoff(conn, tx, RankHistoryRetention.CompositeScope, cutoff);
+        return deleted;
     }
 
     // ── Combo leaderboard ────────────────────────────────────────────

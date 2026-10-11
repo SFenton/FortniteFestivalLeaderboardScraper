@@ -25,6 +25,7 @@ update_triggers:
 | [0010](0010-snapshot-archive-retirement.md) | Retire report-only candidates through verified archives |
 | [0011](0011-automatic-snapshot-archive-retirement.md) | Retire each scrape's agreeing cycle automatically during network-bound fetch |
 | [0012](0012-sparse-snapshot-child-compaction.md) | Compact sparse snapshot children to their live scopes through verified archives |
+| [0013](0013-rank-history-30-day-retention.md) | Keep 30 days of rank history and reach it by copy-swap |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.

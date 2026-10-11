@@ -3184,7 +3184,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunCleanupAsync_WithDatabasePressure_SkipsBestEffortRankHistoryCleanup()
+    public async Task RunCleanupAsync_WithDatabasePressure_SkipsBandCleanupButRunsRankHistoryRetention()
     {
         _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new DatabasePressureSnapshot(true, 1, 0, 0, 0, ["active vacuum count 1"])));
@@ -3192,15 +3192,14 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
 
-        await _databasePressureMonitor.Received(2)
+        await _databasePressureMonitor.Received(1)
             .GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>());
-        Assert.Contains(_log.Entries, entry =>
-            entry.Level == LogLevel.Warning &&
+        Assert.DoesNotContain(_log.Entries, entry =>
             entry.Message.Contains("Skipping rank history retention cleanup", StringComparison.Ordinal));
         Assert.Contains(_log.Entries, entry =>
             entry.Level == LogLevel.Warning &&
             entry.Message.Contains("Skipping band rank history retention cleanup", StringComparison.Ordinal));
-        Assert.Equal(
+        Assert.NotEqual(
             "skipped",
             Assert.Single(
                 ctx.PostScrapeOutcomes.Outcomes,

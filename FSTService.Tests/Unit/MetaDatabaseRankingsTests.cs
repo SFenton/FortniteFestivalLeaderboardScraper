@@ -196,26 +196,26 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
-    public void CleanupCompositeRankHistoryRetention_DeletesOnlyConfiguredBatch()
+    public void CleanupCompositeRankHistoryRetention_KeepsNewestRowAtOrBeforeCutoffOncePerCutoff()
     {
-        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-365);
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays);
         InsertCompositeRankHistoryRow("p1", cutoff.AddDays(-30), 6);
         InsertCompositeRankHistoryRow("p1", cutoff.AddDays(-20), 5);
         InsertCompositeRankHistoryRow("p1", cutoff.AddDays(-10), 4);
         InsertCompositeRankHistoryRow("p1", cutoff.AddDays(2), 3);
         InsertCompositeRankHistoryRow("p2", cutoff.AddDays(-30), 9);
 
-        var firstPassDeleted = Db.CleanupCompositeRankHistoryRetention(batchSize: 1, maxBatches: 1);
+        var firstPassDeleted = Db.CleanupCompositeRankHistoryRetention();
 
-        Assert.Equal(1, firstPassDeleted);
-        Assert.Equal(3, CountCompositeRankHistoryRows("p1"));
-        Assert.Equal([cutoff.AddDays(-30)], GetCompositeRankHistoryDates("p2"));
-
-        var secondPassDeleted = Db.CleanupCompositeRankHistoryRetention(batchSize: 100, maxBatches: 10);
-
-        Assert.Equal(1, secondPassDeleted);
+        Assert.Equal(2, firstPassDeleted);
         Assert.Equal([cutoff.AddDays(-10), cutoff.AddDays(2)], GetCompositeRankHistoryDates("p1"));
         Assert.Equal([cutoff.AddDays(-30)], GetCompositeRankHistoryDates("p2"));
+
+        InsertCompositeRankHistoryRow("p2", cutoff.AddDays(-5), 8);
+        var secondPassDeleted = Db.CleanupCompositeRankHistoryRetention();
+
+        Assert.Equal(0, secondPassDeleted);
+        Assert.Equal([cutoff.AddDays(-30), cutoff.AddDays(-5)], GetCompositeRankHistoryDates("p2"));
     }
 
     // ═══════════════════════════════════════════════════════════

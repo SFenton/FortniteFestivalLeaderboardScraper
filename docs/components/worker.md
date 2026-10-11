@@ -574,6 +574,9 @@ Terminal phase names and publication criticality remain recorded through
 `scrape_phase_outcomes`. Only explicitly best-effort phases may record
 `status=skipped`, with the reason in durable progress. Pressure-gated history
 cleanup, notification gating, and service-level retention use that contract.
+Solo and composite rank-history retention is not pressure-gated: it deletes
+only once per UTC day per table (see
+[data storage: rank-history retention](../architecture/data-storage.md#rank-history-retention)).
 Publication-critical phases may never be skipped: snapshot-only legacy rank
 recompute completes its critical contract without running the legacy update,
 and any persisted critical `skipped` row is invalid and blocks resume or

@@ -112,8 +112,8 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Account rankings ─────────────────────────────────────────────
     int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, double thresholdMultiplier = 1.05);
-    int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true, bool useLatestState = false);
-    int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = 5000, int maxBatches = 1);
+    int SnapshotRankHistory(int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays, bool cleanupRetention = true, bool useLatestState = false);
+    int CleanupRankHistoryRetention(int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays, int commandTimeoutSeconds = 0);
     (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50);
     List<AccountRankingDto> GetAllAccountRankings();
     AccountRankingDto? GetAccountRanking(string accountId);

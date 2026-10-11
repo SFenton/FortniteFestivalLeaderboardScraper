@@ -417,8 +417,8 @@ public interface IMetaDatabase : IDisposable
     (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50);
     CompositeRankingDto? GetCompositeRanking(string accountId);
     (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(string accountId, int radius = 5);
-    void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true, bool useLatestState = false);
-    int CleanupCompositeRankHistoryRetention(int retentionDays = 365, int batchSize = 5000, int maxBatches = 1, int commandTimeoutSeconds = 0, CancellationToken ct = default);
+    void SnapshotCompositeRankHistory(int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays, bool cleanupRetention = true, bool useLatestState = false);
+    int CleanupCompositeRankHistoryRetention(int retentionDays = DatabaseMaintenanceOptions.DefaultRankHistoryRetentionDays, int commandTimeoutSeconds = 0, CancellationToken ct = default);
 
     // ── Solo family rankings ────────────────────────────────────────
     void ReplaceSoloFamilyRankings(
