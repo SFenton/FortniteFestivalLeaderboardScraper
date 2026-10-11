@@ -238,7 +238,25 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   PostgreSQL container memory limit was also raised live from 16 to 24 GiB
   (`docker update`, memory-swap 28 GiB) as a page-cache experiment; the
   production Compose default `FST_POSTGRES_MEM_LIMIT` is still 16 GiB, so a
-  recreate reverts it.
+  recreate reverts it. The cgroup reached the 24 GiB limit during
+  post-processing. Post-processing is disk-bound: PostgreSQL used 0.3 to 3.5
+  of its 6 CPUs, with 10 to 23% full I/O pressure. Setting the variable in the
+  production `.env` makes a global `docker compose up -d` recreate (restart)
+  PostgreSQL, so persist it only in a planned restart window.
+- Since the scrape `1523` boundary, `Scraper__LeaderboardRivalsMaxDegreeOfParallelism=16`
+  (one rivals batch per instrument for the ten registered accounts) and
+  `Scraper__StartRankHistorySnapshotsAfterInstrumentRankings=true` (#210),
+  with #208 (precompute phase timing).
+- Since the scrape `1524` boundary, #211 (loose index scan for legacy
+  solo-projection scope pairs) and #213 (current-state resolution without a
+  `DISTINCT ON` sort).
+- Since the scrape `1525` boundary,
+  `Scraper__PrecomputeLeaderboardSongParallelism=4` and
+  `Scraper__LeaderboardRivalsInstrumentParallelism=3` (#214).
+
+  End-to-end scrape times (start to completion): `1522` 95.8 minutes, `1523`
+  86.5, `1524` 80.7, `1525` 77.1. ComputeRankings took 27.0, 21.1, 16.8, and
+  15.8 minutes.
 
   See [worker: band current projection](../components/worker.md) and
   [worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
