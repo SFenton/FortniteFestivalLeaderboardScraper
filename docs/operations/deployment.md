@@ -236,13 +236,19 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   `Scraper__BandCurrentProjectionStaleSweepChangedPairsOnly=true` (#205), with
   #207 (indexed override ranks in per-instrument solo rankings). The
   PostgreSQL container memory limit was also raised live from 16 to 24 GiB
-  (`docker update`, memory-swap 28 GiB) as a page-cache experiment; the
-  production Compose default `FST_POSTGRES_MEM_LIMIT` is still 16 GiB, so a
-  recreate reverts it. The cgroup reached the 24 GiB limit during
-  post-processing. Post-processing is disk-bound: PostgreSQL used 0.3 to 3.5
-  of its 6 CPUs, with 10 to 23% full I/O pressure. Setting the variable in the
-  production `.env` makes a global `docker compose up -d` recreate (restart)
-  PostgreSQL, so persist it only in a planned restart window.
+  (`docker update`, memory-swap 28 GiB) as a page-cache experiment. The
+  cgroup reached the 24 GiB limit during post-processing. Post-processing is
+  disk-bound: PostgreSQL used 0.3 to 3.5 of its 6 CPUs, with 10 to 23% full
+  I/O pressure.
+- Since the scrape `1530` boundary (2026-10-11 07:17Z, operator-approved) the
+  production `.env` sets `FST_POSTGRES_MEM_LIMIT=24g` and
+  `FST_POSTGRES_MEMSWAP_LIMIT=28g`, and `fst-postgres` was recreated to match
+  Compose. The worker was stopped at the idle boundary. A `CHECKPOINT` (29
+  seconds) preceded a fast shutdown, then `docker compose up -d --no-deps
+  --timeout 300 postgres`. PostgreSQL shut down cleanly and accepted
+  connections two seconds later without recovery. The repository Compose
+  templates keep the 16 GiB default. To roll back, remove both lines and
+  recreate PostgreSQL the same way at an idle boundary.
 - Since the scrape `1523` boundary, `Scraper__LeaderboardRivalsMaxDegreeOfParallelism=16`
   (one rivals batch per instrument for the ten registered accounts) and
   `Scraper__StartRankHistorySnapshotsAfterInstrumentRankings=true` (#210),
