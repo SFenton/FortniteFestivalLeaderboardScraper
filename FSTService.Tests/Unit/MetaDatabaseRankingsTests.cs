@@ -912,6 +912,65 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void RebuildBandTeamRankings_WithoutRowFingerprints_HistoryComputesSameFingerprints()
+    {
+        SeedBandRankingsSource();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var computedDuringRebuild = ReadCurrentRankingFingerprints("Band_Duets");
+
+        Db.RebuildBandTeamRankings(
+            "Band_Duets",
+            totalChartedSongs: 2,
+            options: new BandTeamRankingRebuildOptions { ComputeRowFingerprints = false });
+        var metadata = GetCurrentBandRankingMetadata("Band_Duets");
+        Assert.True(metadata.RowCount > 0);
+        Assert.Equal(0, metadata.RowsWithFingerprint);
+        Db.SnapshotBandRankHistoryChunked(
+            "Band_Duets",
+            new BandRankHistorySnapshotOptions { WriteMode = BandRankHistoryWriteMode.Dual });
+        var computedDuringSnapshot = ReadV2LatestFingerprints("Band_Duets", today);
+
+        Assert.NotEmpty(computedDuringRebuild);
+        Assert.Equal(computedDuringRebuild, computedDuringSnapshot);
+    }
+
+    private SortedDictionary<string, string> ReadCurrentRankingFingerprints(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT ranking_scope || '|' || combo_id || '|' || team_key, row_fingerprint
+            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentRankingTable(bandType))}
+            WHERE band_type = @bandType;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        var fingerprints = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            fingerprints[reader.GetString(0)] = reader.GetString(1);
+        return fingerprints;
+    }
+
+    private SortedDictionary<string, string> ReadV2LatestFingerprints(string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT ranking_scope || '|' || combo_id || '|' || team_key, row_fingerprint
+            FROM band_team_rank_history_latest_v2
+            WHERE band_type = @bandType
+              AND snapshot_date = @snapshotDate;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        var fingerprints = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            fingerprints[reader.GetString(0)] = reader.GetString(1);
+        return fingerprints;
+    }
+
+    [Fact]
     public void SnapshotBandRankHistory_DualModeWritesV2ParityAndApiStillUsesLegacyHistory()
     {
         SeedBandRankingsSource();

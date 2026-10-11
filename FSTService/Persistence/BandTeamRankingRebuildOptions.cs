@@ -25,6 +25,27 @@ public sealed class BandTeamRankingRebuildOptions
     /// wall clock when PostgreSQL can absorb the overlap.
     /// </summary>
     public bool OverlapRankHistorySnapshotsWithBandRankings { get; set; } = false;
+
+    /// <summary>
+    /// Store each ranking row's band rank-history fingerprint during the rebuild.
+    /// Band rank-history snapshots compute an empty fingerprint themselves, so the
+    /// worker turns this off while band rank history is disabled.
+    /// </summary>
+    public bool ComputeRowFingerprints { get; set; } = true;
+
+    internal BandTeamRankingRebuildOptions WithComputeRowFingerprints(bool computeRowFingerprints) =>
+        computeRowFingerprints == ComputeRowFingerprints
+            ? this
+            : new BandTeamRankingRebuildOptions
+            {
+                WriteMode = WriteMode,
+                CommandTimeoutSeconds = CommandTimeoutSeconds,
+                AnalyzeStagingTable = AnalyzeStagingTable,
+                DisableSynchronousCommit = DisableSynchronousCommit,
+                MaxParallelBandTypes = MaxParallelBandTypes,
+                OverlapRankHistorySnapshotsWithBandRankings = OverlapRankHistorySnapshotsWithBandRankings,
+                ComputeRowFingerprints = computeRowFingerprints,
+            };
 }
 
 public sealed record ScrapePhaseTimingRecord(
