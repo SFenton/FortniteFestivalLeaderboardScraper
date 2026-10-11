@@ -269,6 +269,23 @@ passing full restore drill, a first-attempt swap, identical API page hashes
 for all six live songs across six offsets, identical per-song root-table
 fingerprints, and both indexes adopted.
 
+Steady state (measured 2026-10-11): retirement and compaction run in every
+scrape's fetch window for all nine instruments. The snapshot family, summed
+from each retention cycle's observations, grew about 40 GB per day to 1.31 TB
+by 2026-09-24. Since 2026-10-03 it has stayed between 43 and 61 GB (54.5 GB at
+cycle `187`) while about 20 scrapes ran per day. Compaction reclaims 52 to 66
+GiB per day and retirement 2 to 3 GiB. From the start of scrape `1537` to the
+start of `1538` the database grew 1.0 GB, 0.9 GB of it new snapshot rows that
+the next window compacts. Two things still grow:
+
+- Archives grow 6 to 8 GiB per day (about 0.5 GB per scrape; 184 GB in total).
+  They are the only copy of superseded snapshot rows and are never deleted
+  automatically.
+- Attached children went from 237 to 649 in eight days, about 50 per day,
+  because a child stays attached while any of its songs is unchanged. Pro
+  Cymbals and Pro Drums each hold about 95 children under 1 GB in total. This
+  costs query planning time, not space.
+
 ## Live-safety windows
 
 Run only while the scrape is network-bound (solo or band page fetching) or
