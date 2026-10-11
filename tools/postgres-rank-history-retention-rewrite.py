@@ -24,6 +24,7 @@ Commands:
   archive   pg_dump each swapped-out table and verify the archive (fetch window only)
   drop      drop swapped-out tables whose archive is verified
   rollback  swap one table's original back before it is dropped
+  finalize-brin  make the partitioned BRIN index valid (swap does this after the last partition)
 """
 
 from __future__ import annotations
@@ -171,13 +172,52 @@ CREATE TABLE IF NOT EXISTS rank_history_retention_state (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now());""")
 
 
-def ensure_parent_brin() -> None:
-    """The partitioned BRIN index is created ON ONLY the parent; each swap attaches
-    its partition's BRIN index, and the parent becomes valid with the last one."""
-    if exists(PARENT_BRIN):
-        return
-    psql(f"SET lock_timeout = '2s'; CREATE INDEX IF NOT EXISTS {PARENT_BRIN} ON ONLY public.{PARENT} "
-         f"USING brin (snapshot_date) {BRIN_OPTIONS};", timeout=120)
+def parent_brin_state() -> str:
+    """'valid', 'invalid', or 'missing'."""
+    out = psql(f"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass({quote('public.' + PARENT_BRIN)});")
+    return {"t": "valid", "f": "invalid"}.get(out, "missing")
+
+
+def finalize_parent_brin() -> str:
+    """Makes ``ix_rh_retention_cutoff_brin`` a valid partitioned index once every
+    partition has been swapped. A swapped-in partition's BRIN index is adopted by
+    an existing parent index on ATTACH, but before PostgreSQL 17.10 an adopted
+    index never revalidates an invalid parent, so an invalid parent is dropped
+    (with its attached children) and rebuilt: each partition gets its BRIN index
+    (built under a SHARE lock, which readers ignore), then the parent is created
+    ON ONLY and every child is attached explicitly, which validates it."""
+    state = parent_brin_state()
+    if state == "valid":
+        return state
+    if state == "invalid":
+        run_with_lock_retries(f"SET lock_timeout = '500ms'; DROP INDEX public.{PARENT_BRIN};",
+                              f"drop of invalid {PARENT_BRIN}", timeout=120)
+    for table in PARTITIONS:
+        brin = names(table)["brin"]
+        valid = psql(f"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass({quote('public.' + brin)});")
+        if valid == "f":
+            psql(f"SET lock_timeout = '3s'; DROP INDEX public.{brin};", timeout=120)
+        if valid != "t":
+            run_with_lock_retries(
+                f"SET lock_timeout = '3s'; CREATE INDEX {brin} ON public.{table} USING brin (snapshot_date) "
+                f"{BRIN_OPTIONS};", f"BRIN index on {table}", timeout=3600)
+    statements = [
+        "BEGIN;",
+        "SET LOCAL lock_timeout = '500ms';",
+        f"CREATE INDEX {PARENT_BRIN} ON ONLY public.{PARENT} USING brin (snapshot_date) {BRIN_OPTIONS};",
+        *(f"ALTER INDEX public.{PARENT_BRIN} ATTACH PARTITION public.{names(t)['brin']};" for t in PARTITIONS),
+        "COMMIT;",
+    ]
+    run_with_lock_retries("\n".join(statements), f"creation of {PARENT_BRIN}", timeout=300)
+    state = parent_brin_state()
+    if state != "valid":
+        raise RetirementError(f"{PARENT_BRIN} is {state} after attaching every partition")
+    return state
+
+
+def all_partitions_swapped(manifest: dict) -> bool:
+    return all(manifest.get(t, {}).get("status") in ("swapped", "archived", "dropped", "rolled_back")
+               for t in PARTITIONS)
 
 
 # ── plan ─────────────────────────────────────────────────────────────
@@ -340,9 +380,8 @@ def swap_sql(table: str, entry: dict) -> str:
             f"ALTER TABLE public.{n['new']} RENAME TO {table};",
             f"ALTER INDEX public.{n['new_pkey']} RENAME TO {n['pkey']};",
             f"ALTER INDEX public.{n['new_brin']} RENAME TO {n['brin']};",
+            # An existing parent BRIN index adopts the partition's (finalize_parent_brin).
             f"ALTER TABLE public.{PARENT} ATTACH PARTITION public.{table} FOR VALUES IN ({quote(PARTITIONS[table])});",
-            # ATTACH adopts the BRIN index but only an explicit index attach revalidates the parent.
-            f"ALTER INDEX public.{PARENT_BRIN} ATTACH PARTITION public.{n['brin']};",
         ]
     lines += [
         f"ALTER TABLE public.{table} RESET (autovacuum_enabled);",
@@ -415,8 +454,6 @@ def command_swap(args: argparse.Namespace, tables: list[str] | None = None) -> i
             if not exists(names(table)["new"]) or is_partition(names(table)["new"]):
                 raise RetirementError(f"{table}: built replacement {names(table)['new']} is missing or attached")
             reason = require_window(args.window)
-            if table != COMPOSITE:
-                ensure_parent_brin()
             started = time.monotonic()
             out, attempts = run_with_lock_retries(swap_sql(table, entry), f"swap of {table}", timeout=1200)
             current_rows = int(out.splitlines()[-1])
@@ -426,6 +463,9 @@ def command_swap(args: argparse.Namespace, tables: list[str] | None = None) -> i
                    swapped_bytes=verified["bytes"], window=reason, bound_dropped=drop_bound(table))
             print(f"{retire.utcnow()} swapped {table} in {attempts} attempt(s); {current_rows:,} rows dated "
                   f"from {entry['build_day']} copied under lock", flush=True)
+        if all_partitions_swapped(manifest) and parent_brin_state() != "valid":
+            require_window(args.window)
+            print(f"{retire.utcnow()} {PARENT_BRIN} is {finalize_parent_brin()}", flush=True)
     return 0
 
 
@@ -545,7 +585,6 @@ WHERE attrelid = {quote('public.' + table)}::regclass AND attnum > 0 AND NOT att
             f"ALTER INDEX public.{n['old_pkey']} RENAME TO {n['pkey']};",
             f"ALTER INDEX public.{n['old_brin']} RENAME TO {n['brin']};",
             f"ALTER TABLE public.{PARENT} ATTACH PARTITION public.{table} FOR VALUES IN ({quote(PARTITIONS[table])});",
-            f"ALTER INDEX public.{PARENT_BRIN} ATTACH PARTITION public.{n['brin']};",
         ]
     lines += [f"DELETE FROM rank_history_retention_state WHERE scope = {quote(n['scope'])};", "COMMIT;"]
     return "\n".join(lines)
@@ -586,7 +625,9 @@ def command_rollback(args: argparse.Namespace) -> int:
         require_window(args.window)
         _, attempts = run_with_lock_retries(rollback_sql(table, entry), f"rollback of {table}", timeout=3600)
         drop_bound(table)
-    update(manifest, table, status="rolled_back", rolled_back_at=retire.utcnow(), rollback_attempts=attempts)
+        update(manifest, table, status="rolled_back", rolled_back_at=retire.utcnow(), rollback_attempts=attempts)
+        if table != COMPOSITE and all_partitions_swapped(manifest):
+            finalize_parent_brin()
     print(f"{retire.utcnow()} rolled back {table}; the replacement is kept as {names(table)['new']}", flush=True)
     return 0
 
@@ -604,7 +645,7 @@ def selected(args: argparse.Namespace) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("plan", "build", "swap", "run", "archive", "drop"):
+    for name in ("plan", "build", "swap", "run", "archive", "drop", "finalize-brin"):
         p = sub.add_parser(name)
         p.add_argument("--tables", nargs="*", help="limit to these tables")
         p.add_argument("--retention-days", type=int, default=30)
@@ -620,10 +661,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def command_finalize_brin(args: argparse.Namespace) -> int:
+    with run_lock():
+        if not all_partitions_swapped(load_manifest()):
+            raise RetirementError("finalize-brin needs every rank_history partition swapped first")
+        require_window(args.window)
+        print(f"{retire.utcnow()} {PARENT_BRIN} is {finalize_parent_brin()}", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     commands = {"plan": command_plan, "build": command_build, "swap": command_swap, "run": command_run,
-                "archive": command_archive, "drop": command_drop, "rollback": command_rollback}
+                "archive": command_archive, "drop": command_drop, "rollback": command_rollback,
+                "finalize-brin": command_finalize_brin}
     if getattr(args, "retention_days", 30) < 1:
         raise SystemExit("--retention-days must be at least 1")
     try:

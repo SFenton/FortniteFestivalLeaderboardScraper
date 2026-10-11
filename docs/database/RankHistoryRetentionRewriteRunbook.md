@@ -51,8 +51,8 @@ smallest partition first and composite last:
    autovacuum off, re-enabled here). It copies rows dated on or after the
    build day, then exchanges names with a 500 ms lock timeout, because those
    locks block readers. A partition is detached and the replacement
-   attached (the bound `CHECK` skips the attach scan), and its BRIN index is
-   attached to the parent's `ix_rh_retention_cutoff_brin`. Composite's
+   attached (the bound `CHECK` skips the attach scan); an existing parent
+   `ix_rh_retention_cutoff_brin` adopts its BRIN index. Composite's
    renamed BRIN index becomes `ix_crh_retention_cutoff_brin`. The same
    transaction records the cutoff in `rank_history_retention_state`. Lock
    timeouts and deadlocks retry 12 times, then defer. The bound `CHECK` is
@@ -64,12 +64,18 @@ smallest partition first and composite last:
 4. **drop**: drops `<table>_rtn_old` only when its archive's SHA-256 matches
    and the table is standalone.
 
-Before the first partition swap the tool creates `ix_rh_retention_cutoff_brin`
-`ON ONLY rank_history`; it becomes valid when the last partition's index is
-attached. The tool also creates `rank_history_retention_state`. Running the
-tool before deploying the 30-day worker means the schema initializer finds
-both and never builds a BRIN index on a large table (it builds them only below
-20 million estimated rows).
+After the last partition swap (or a partition rollback), the tool makes
+`ix_rh_retention_cutoff_brin` a valid partitioned index (`finalize-brin` runs
+the same step alone). It builds any missing partition BRIN index under a
+`SHARE` lock, which readers ignore, then creates the parent `ON ONLY` and
+attaches each child explicitly. On PostgreSQL before 17.10 (production runs
+17.9), an index adopted by `ATTACH PARTITION` or re-attached does not
+revalidate an invalid parent. An invalid parent is therefore dropped with its
+children and rebuilt this way. Queries and the daily delete use each
+partition's own BRIN index, so an invalid parent only affects index
+inheritance for new partitions. The tool also creates
+`rank_history_retention_state`. The schema initializer finds both and builds
+neither index on a table whose heap is 1 GiB or larger.
 
 The tool shares the snapshot retirement flock, so it never overlaps
 `fst-snapshot-retire-auto`, and it refuses to start a build when the FST drive

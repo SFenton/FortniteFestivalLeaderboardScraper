@@ -60,8 +60,6 @@ class SwapSqlTests(unittest.TestCase):
             "LOCK TABLE", "INSERT INTO public.rank_history_solo_bass_rtn_new",
             "DETACH PARTITION public.rank_history_solo_bass;",
             "ATTACH PARTITION public.rank_history_solo_bass FOR VALUES IN ('Solo_Bass');",
-            "ALTER INDEX public.ix_rh_retention_cutoff_brin ATTACH PARTITION "
-            "public.rank_history_solo_bass_snapshot_date_brin;",
             "INSERT INTO rank_history_retention_state")]
         self.assertEqual(order, sorted(order))
         self.assertIn("('solo:Solo_Bass', '2026-09-11'::date, now())", sql)
@@ -95,9 +93,50 @@ class RollbackSqlTests(unittest.TestCase):
                       "weighted_rank = EXCLUDED.weighted_rank;", sql)
         self.assertIn("ALTER INDEX public.rank_history_pro_drums_rtn_old_brin RENAME TO "
                       "rank_history_pro_drums_snapshot_date_brin;", sql)
-        self.assertLess(sql.index("ATTACH PARTITION public.rank_history_pro_drums FOR VALUES"),
-                        sql.index("ALTER INDEX public.ix_rh_retention_cutoff_brin ATTACH PARTITION"))
+        self.assertIn("ATTACH PARTITION public.rank_history_pro_drums FOR VALUES IN ('Solo_PeripheralDrums');", sql)
+        self.assertNotIn("ALTER INDEX public.ix_rh_retention_cutoff_brin", sql)
         self.assertIn("DELETE FROM rank_history_retention_state WHERE scope = 'solo:Solo_PeripheralDrums';", sql)
+
+
+class FinalizeBrinTests(unittest.TestCase):
+    def run_finalize(self, parent_state, child_valid):
+        executed = []
+
+        def fake(sql, timeout=900):
+            executed.append(sql)
+            if "indexrelid = to_regclass('public.ix_rh_retention_cutoff_brin')" in sql:
+                return {"valid": "t", "invalid": "f", "missing": ""}[parent_state.pop(0)]
+            if "SELECT indisvalid" in sql:
+                return child_valid
+            return ""
+
+        with Patch(rewrite, psql=fake):
+            result = rewrite.finalize_parent_brin()
+        return result, executed
+
+    def test_valid_parent_is_left_alone(self):
+        result, executed = self.run_finalize(["valid"], "t")
+        self.assertEqual(result, "valid")
+        self.assertEqual(len(executed), 1)
+
+    def test_invalid_parent_is_dropped_and_rebuilt_with_explicit_attaches(self):
+        result, executed = self.run_finalize(["invalid", "valid"], "t")
+        self.assertEqual(result, "valid")
+        self.assertIn("DROP INDEX public.ix_rh_retention_cutoff_brin;", executed[1])
+        create = next(sql for sql in executed if "ON ONLY public.rank_history" in sql)
+        self.assertEqual(create.count("ALTER INDEX public.ix_rh_retention_cutoff_brin ATTACH PARTITION"), 9)
+        self.assertFalse(any("CREATE INDEX rank_history_" in sql for sql in executed))
+
+    def test_missing_child_indexes_are_built_before_the_parent(self):
+        result, executed = self.run_finalize(["missing", "valid"], "")
+        builds = [i for i, sql in enumerate(executed) if "CREATE INDEX rank_history_" in sql]
+        parent = next(i for i, sql in enumerate(executed) if "ON ONLY public.rank_history" in sql)
+        self.assertEqual(len(builds), 9)
+        self.assertLess(max(builds), parent)
+
+    def test_still_invalid_parent_is_an_error(self):
+        with self.assertRaises(rewrite.RetirementError):
+            self.run_finalize(["missing", "invalid"], "t")
 
 
 class RetryTests(unittest.TestCase):

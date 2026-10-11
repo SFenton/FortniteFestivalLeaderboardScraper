@@ -912,8 +912,9 @@ than 20 million estimated rows is refused with a warning; the
 it by copy-swap instead of deleting most of the table row by row. BRIN indexes
 on `snapshot_date` (`ix_rh_retention_cutoff_brin` on the `rank_history`
 parent and `ix_crh_retention_cutoff_brin` on composite) serve the delete's
-range scan. The schema initializer creates them only below 20 million
-estimated rows; the rewrite tool creates them on production-sized tables.
+range scan. The schema initializer creates them only while the heap is under
+1 GiB and gives up after a 2 s lock wait; the rewrite tool creates them on
+production-sized tables.
 Band rank history has its own `BandRankHistory:RetentionDays`.
 
 ## Publication ownership

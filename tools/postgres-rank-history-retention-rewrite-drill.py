@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Disposable-PostgreSQL drill for postgres-rank-history-retention-rewrite.py.
 
-Starts a throwaway postgres:17 container with the production rank-history shape
+Starts a throwaway PostgreSQL 17.9 (production's minor version) container with the production rank-history shape
 (nine LIST partitions with a dropped column, composite table with its BRIN
 index), seeds 60 days of history, and runs build, a write between build and
 swap, swap, rollback of one table, archive, and drop. It checks that every
@@ -36,6 +36,9 @@ PARTITIONS = {
     "rank_history_pro_bass": "Solo_PeripheralBass",
 }
 RETENTION = 30
+# Production's minor version: before 17.10 an adopted partition index never
+# revalidates an invalid parent index.
+IMAGE = os.environ.get("FST_RH_DRILL_IMAGE", "postgres:17.9")
 
 SCHEMA = """
 CREATE TABLE rank_history (
@@ -112,7 +115,7 @@ def full_fingerprint(table: str) -> str:
 def main() -> int:
     started = sh(["docker", "run", "-d", "--rm", "--name", CONTAINER, "--network", "none",
                   "-e", "POSTGRES_USER=fst", "-e", "POSTGRES_DB=fstservice",
-                  "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17"])
+                  "-e", "POSTGRES_HOST_AUTH_METHOD=trust", IMAGE])
     assert started.returncode == 0, started.stderr
     try:
         for _ in range(60):
@@ -148,6 +151,18 @@ SELECT 'late' || k, current_date, k FROM generate_series(1, 5) k;""")
             assert psql("SELECT count(*) FROM rank_history_retention_state "
                         f"WHERE retained_cutoff = current_date - {RETENTION};") == "10"
             assert psql("SELECT count(*) FROM rank_history WHERE account_id LIKE 'late%';") == "5"
+            # Production state after the first run on 17.9: a parent created ON ONLY
+            # before the swaps, every child adopted by ATTACH, parent still invalid.
+            psql("DROP INDEX ix_rh_retention_cutoff_brin;\n"
+                 "CREATE INDEX ix_rh_retention_cutoff_brin ON ONLY rank_history USING brin (snapshot_date);\n"
+                 + "".join(f"CREATE INDEX {t}_snapshot_date_brin ON {t} USING brin (snapshot_date);\n"
+                           f"ALTER TABLE rank_history DETACH PARTITION {t};\n"
+                           f"ALTER TABLE rank_history ATTACH PARTITION {t} FOR VALUES IN ('{i}');\n"
+                           for t, i in PARTITIONS.items()))
+            assert psql("SELECT count(*) FROM pg_inherits WHERE inhparent = 'ix_rh_retention_cutoff_brin'::regclass;") == "9"
+            assert psql("SELECT indisvalid FROM pg_index WHERE indexrelid = 'ix_rh_retention_cutoff_brin'::regclass;") == "f"
+            tool("finalize-brin", root=root)
+            assert psql("SELECT indisvalid FROM pg_index WHERE indexrelid = 'ix_rh_retention_cutoff_brin'::regclass;") == "t"
             # Routing through the parent still works after the swap.
             psql("INSERT INTO rank_history (account_id, instrument, snapshot_date, adjusted_skill_rank, weighted_rank, "
                  "fc_rate_rank, total_score_rank, max_score_percent_rank) "
