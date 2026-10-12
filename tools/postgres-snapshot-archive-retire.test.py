@@ -352,6 +352,20 @@ class PruneArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(retire.RetirementError, "deleted by archive retention"):
             retire.require_archive(entries, dropped)
 
+    def test_a_retried_archive_at_the_same_path_is_restorable_after_an_older_deletion(self):
+        compaction = self.root / "compaction" / "manifest.jsonl"
+        compaction.parent.mkdir(parents=True)
+        path = self.archive(compaction, "c_retry", ["archived"], "2026-10-10T00:00:00Z")
+        self.prune()
+        self.assertFalse(path.exists())
+        # A later attempt for the unchanged child writes the same path again.
+        self.archive(compaction, "c_retry", ["archived", "swapped", "compacted"], "2026-10-13T11:00:00Z")
+        entries = retire.read_manifest(compaction)
+        compacted = [e for e in entries if e["state"] == "compacted"][-1]
+        self.assertEqual(retire.require_archive(entries, compacted), path)
+        self.prune()
+        self.assertTrue(path.exists())
+
     def test_disable_files_and_dry_run_delete_nothing(self):
         cycle = self.root / "cycle-202" / "manifest.jsonl"
         cycle.parent.mkdir(parents=True)

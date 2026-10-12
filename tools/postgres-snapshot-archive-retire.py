@@ -390,9 +390,13 @@ def read_manifest(manifest: pathlib.Path) -> list[dict]:
 
 
 def require_archive(entries: list[dict], entry: dict) -> pathlib.Path:
-    """The entry's archive, refusing clearly when retention deleted it."""
+    """The entry's archive, refusing clearly when retention deleted it. Archive
+    paths are reused by retried runs, so only a deletion recorded after this
+    entry counts."""
     path = pathlib.Path(entry["archive_path"])
-    deleted = [e for e in entries if e.get("archive_path") == str(path) and e.get("state") == "archive_deleted"]
+    position = max(i for i, e in enumerate(entries) if e is entry)
+    deleted = [e for e in entries[position + 1:]
+               if e.get("archive_path") == str(path) and e.get("state") == "archive_deleted"]
     if deleted:
         raise RetirementError(f"archive {path.name} was deleted by archive retention at {deleted[-1]['at']}; "
                               "this child can no longer be restored")
