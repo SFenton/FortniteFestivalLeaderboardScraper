@@ -1655,7 +1655,9 @@ public static class DatabaseInitializer
         -- Same-day rank-history updates are HOT only when the row's page has free
         -- space; 30% free space lets most of a day's updates stay on-page
         -- instead of writing new primary-key entries. Only new pages are
-        -- affected. Guarded so startup takes no lock when already set.
+        -- affected. Autovacuum runs at 2% dead rows instead of 20%, so the space
+        -- the daily retention delete and same-day updates free is reused before
+        -- the next day's rows arrive. Guarded so startup takes no lock when set.
         DO $$
         DECLARE target regclass;
         BEGIN
@@ -1667,9 +1669,12 @@ public static class DatabaseInitializer
             LOOP
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_class
-                    WHERE oid = target AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
+                    WHERE oid = target
+                      AND COALESCE(reloptions, ARRAY[]::TEXT[])
+                          @> ARRAY['fillfactor=70', 'autovacuum_vacuum_scale_factor=0.02'])
                 THEN
-                    EXECUTE format('ALTER TABLE %s SET (fillfactor=70)', target);
+                    EXECUTE format(
+                        'ALTER TABLE %s SET (fillfactor=70, autovacuum_vacuum_scale_factor=0.02)', target);
                 END IF;
             END LOOP;
         END $$;
@@ -3142,9 +3147,10 @@ public static class DatabaseInitializer
             IF NOT EXISTS (
                 SELECT 1 FROM pg_class
                 WHERE oid = 'composite_rank_history'::regclass
-                  AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
+                  AND COALESCE(reloptions, ARRAY[]::TEXT[])
+                      @> ARRAY['fillfactor=70', 'autovacuum_vacuum_scale_factor=0.02'])
             THEN
-                ALTER TABLE composite_rank_history SET (fillfactor=70);
+                ALTER TABLE composite_rank_history SET (fillfactor=70, autovacuum_vacuum_scale_factor=0.02);
             END IF;
         END $$;
         -- See ix_rh_retention_cutoff_brin: small heaps only, bounded lock wait.

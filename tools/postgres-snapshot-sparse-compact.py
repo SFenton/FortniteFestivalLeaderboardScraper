@@ -710,7 +710,7 @@ def command_auto(args: argparse.Namespace) -> int:
 
 
 def command_restore(args: argparse.Namespace) -> int:
-    entries = [json.loads(line) for line in manifest_path().read_text().splitlines()]
+    entries = retire.read_manifest(manifest_path())
     matches = [e for e in entries if e["relation"] == args.relation and e["state"] in ("swapped", "compacted")]
     if not matches:
         raise RetirementError("relation has no swapped or compacted manifest entry")
@@ -718,7 +718,7 @@ def command_restore(args: argparse.Namespace) -> int:
     if any(e["relation"] == args.relation and e["state"] == "restored" and e["new_oid"] == entry["new_oid"]
            for e in entries):
         raise RetirementError("this compaction was already restored")
-    path = pathlib.Path(entry["archive_path"])
+    path = retire.require_archive(entries, entry)
     if retire.sha256_file(path) != entry["archive_sha256"]:
         raise RetirementError("archive checksum does not match the manifest")
     rel = entry["relation"]

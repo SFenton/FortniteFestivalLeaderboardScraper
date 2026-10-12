@@ -295,8 +295,9 @@ WHERE o.snapshot_date < {b}::date AND (o.snapshot_date > {c}::date OR k.account_
         f"CREATE UNIQUE INDEX {n['new_pkey']} ON public.{n['new']} ({key_columns(table)});",
         f"ALTER TABLE public.{n['new']} ADD CONSTRAINT {n['new_pkey']} PRIMARY KEY USING INDEX {n['new_pkey']};",
         f"CREATE INDEX {n['new_brin']} ON public.{n['new']} USING brin (snapshot_date) {BRIN_OPTIONS};",
-        # Pages written later (the current day's rows) keep room for HOT updates.
-        f"ALTER TABLE public.{n['new']} SET (fillfactor = 70);",
+        # Pages written later (the current day's rows) keep room for HOT updates,
+        # and autovacuum runs at 2% dead rows, matching the schema initializer.
+        f"ALTER TABLE public.{n['new']} SET (fillfactor = 70, autovacuum_vacuum_scale_factor = 0.02);",
         f"""SELECT json_build_object(
   'source_by_date', (SELECT coalesce(json_object_agg(snapshot_date, n), '{{}}') FROM _rtn_stats
                      WHERE account_id IS NULL AND snapshot_date > {c}::date),

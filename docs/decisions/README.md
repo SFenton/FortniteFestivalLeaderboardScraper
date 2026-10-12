@@ -26,6 +26,7 @@ update_triggers:
 | [0011](0011-automatic-snapshot-archive-retirement.md) | Retire each scrape's agreeing cycle automatically during network-bound fetch |
 | [0012](0012-sparse-snapshot-child-compaction.md) | Compact sparse snapshot children to their live scopes through verified archives |
 | [0013](0013-rank-history-30-day-retention.md) | Keep 30 days of rank history and reach it by copy-swap |
+| [0014](0014-snapshot-archive-24-hour-retention.md) | Delete snapshot archives 24 hours after retirement or compaction |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.

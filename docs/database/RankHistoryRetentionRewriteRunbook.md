@@ -41,7 +41,8 @@ smallest partition first and composite last:
    each account's boundary date in one scan, copy the kept rows dated before
    the build day, add a bound `CHECK` for partitions, then build the primary
    key and a BRIN index on `snapshot_date`. The table is then set to
-   `fillfactor = 70`, analyzed, and verified: per-date counts after the cutoff
+   `fillfactor = 70` and `autovacuum_vacuum_scale_factor = 0.02`, analyzed,
+   and verified: per-date counts after the cutoff
    must match the source, and there is exactly one boundary row per account.
    Rows dated before the build day are never written again, so the build
    needs no lock.

@@ -1,8 +1,8 @@
 ---
 status: living-runbook
 owner: data
-last_verified: 2026-10-02
-last_verified_commit: 598965ef
+last_verified: 2026-10-12
+last_verified_commit: 33ae0555
 sources:
   - tools/postgres-snapshot-archive-retire.py
   - tools/postgres-snapshot-archive-retire.test.py
@@ -26,14 +26,17 @@ update_triggers:
 
 This operator procedure reclaims space from `leaderboard_entries_snapshot`
 children that an immutable report-only retention cycle proved unreferenced. It
-archives every child before any mutation, keeps each archive on the FST drive,
-and restores any child with one command. It is a host tool, not a worker
+archives every child before any mutation, keeps each archive on the FST drive
+for 24 hours after the child is dropped or compacted, and restores any child
+with one command within that time. It is a host tool, not a worker
 feature. A host systemd timer runs its `auto` mode once per scrape during
 network-bound fetching (see [Automatic retirement](#automatic-retirement)).
 See [ADR 0010](../decisions/0010-snapshot-archive-retirement.md) for why it
 replaces the per-child quarantine machine for this workload and
 [ADR 0011](../decisions/0011-automatic-snapshot-archive-retirement.md) for why
-it runs automatically.
+it runs automatically, and
+[ADR 0014](../decisions/0014-snapshot-archive-24-hour-retention.md) for why
+archives are deleted after 24 hours.
 
 ## Authorization boundary
 
@@ -92,9 +95,24 @@ python3 tools/postgres-snapshot-archive-retire.py plan --cycle 95 --expected-can
 python3 tools/postgres-snapshot-archive-retire.py retire --cycle 95 \
   --expected-candidate-hash "$H" --limit 50 --drill-every 25 --pause-seconds 3 \
   --stop-file /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/evidence/snapshot-retire-cycle95/STOP
-# Rollback one child
+# Rollback one child (only while its archive exists)
 python3 tools/postgres-snapshot-archive-retire.py restore --cycle 95 --relation <child>
+# Archive retention (the timer runs this after every tick)
+python3 tools/postgres-snapshot-archive-retire.py prune-archives --dry-run
+python3 tools/postgres-snapshot-archive-retire.py prune-archives [--max-age-hours 24]
 ```
+
+`prune-archives` deletes the archive of every retired or compacted child, in
+both `cycle-*/manifest.jsonl` and `compaction/manifest.jsonl`, whose last
+manifest state is `dropped`, `compacted`, `restored`, or `archived` (never
+mutated) and is at least `--max-age-hours` old (default 24). It appends an
+`archive_deleted` entry, so the manifests stay a complete record, and `restore`
+then refuses that child with a clear message. It never deletes a `swapped`
+compaction's archive (verification has not finished and the original is kept
+as `_cold`), holds the shared retirement lock, refuses archive paths outside
+the archive root, and does nothing while either `AUTO_DISABLED` file exists,
+so an archive under investigation is kept. Archives older than 24 hours are
+gone for good: a problem found after that cannot be rolled back from them.
 
 `restore` verifies the archive SHA-256, refuses an existing relation, restores
 the child standalone from a `postgres:17` client in `fst-postgres`'s network
@@ -154,8 +172,9 @@ touch /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/archives/snapsh
 ```
 
 Every child still lands in `cycle-<id>/manifest.jsonl` with its archive, so
-rollback is the same `restore` command. Archives are about 8% of the reclaimed
-size (about 3 GiB per day) and are never deleted automatically.
+rollback is the same `restore` command for 24 hours. Each timer tick then runs
+`prune-archives`, which deletes archives older than that (see
+[Commands](#commands)).
 
 ## Sparse-child compaction
 
@@ -278,9 +297,9 @@ GiB per day and retirement 2 to 3 GiB. From the start of scrape `1537` to the
 start of `1538` the database grew 1.0 GB, 0.9 GB of it new snapshot rows that
 the next window compacts. Two things still grow:
 
-- Archives grow 6 to 8 GiB per day (about 0.5 GB per scrape; 184 GB in total).
-  They are the only copy of superseded snapshot rows and are never deleted
-  automatically.
+- Archives grew 6 to 8 GiB per day (about 0.5 GB per scrape; 184 GB in total)
+  until 2026-10-12. Since then the timer deletes them 24 hours after their
+  child is dropped or compacted, so only about a day's archives remain.
 - Attached children went from 237 to 649 in eight days, about 50 per day,
   because a child stays attached while any of its songs is unchanged. Pro
   Cymbals and Pro Drums each hold about 95 children under 1 GB in total. This

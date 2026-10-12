@@ -46,7 +46,8 @@ keeps automation idle until an operator clears it.
   restore drills that ADR 0010 already required.
 - Retirement never overlaps flushes, index builds, or post-processing, because
   every non-fetch state, including an unreachable API, closes the window.
-- Archives keep accumulating (about 8% of reclaimed bytes) and are never
-  deleted automatically; archive retention remains an operator decision.
+- Archives accumulated (about 8% of reclaimed bytes) until
+  [ADR 0014](0014-snapshot-archive-24-hour-retention.md) made the timer delete
+  them 24 hours after their child is dropped or compacted.
 - The worker stays unaware of retirement; disabling is one file or one
   `systemctl --user disable --now`.
