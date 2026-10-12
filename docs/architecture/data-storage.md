@@ -917,6 +917,10 @@ range scan. The schema initializer creates them only while the heap is under
 production-sized tables.
 Band rank history has its own `BandRankHistory:RetentionDays`.
 
+The one-time reduction completed on 2026-10-11: the 10 tables went from
+390.8 GB to 70.6 GB, and the dropped originals are archived (81.5 GB) under
+`fst-data/archives/rank-history-retention/`. No rewrite step is pending.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a

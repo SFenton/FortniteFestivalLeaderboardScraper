@@ -129,9 +129,19 @@ all 10 scopes); no account has more than one row dated at or before the
 cutoff; the history API returns rows from 2026-09-11 on. Scrape `1540` ran on
 the 30-day worker and passed leaderboard and band fetch.
 
+All 10 originals were archived during the fetch windows of scrapes `1540` and
+`1541` (81.5 GB in total, 16.3 GB for composite). Each archive's restored row
+count matched. They were dropped at 22:38Z, reclaiming 390.8 GB; the
+database went from 1,229 GB to 914 GB (15:45Z and 23:38Z samples, about
+eight hours apart), and the 10 tables held 70.6 GB at 23:55Z. The
+archives remain under `fst-data/archives/rank-history-retention/` and are
+never deleted automatically; only the operator removes them. Nothing in this
+procedure is pending; the daily worker retention maintains the window.
+
 ## Rollback
 
-Before `drop`, `rollback <table>` restores the original. It first gives the
+All 2026-10-11 originals are dropped, so only the archive restore below
+applies to them. Before `drop`, `rollback <table>` restores the original. It first gives the
 detached original a validated bound `CHECK` and a BRIN index, with no effect on
 the live table. It then upserts the rows the replacement gained since the
 build day, swaps the names back, and deletes the scope's state row. The

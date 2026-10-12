@@ -266,6 +266,13 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
 
   See [worker: band current projection](../components/worker.md) and
   [worker: solo current projection writes](../components/worker.md#solo-current-projection-writes).
+- Since the scrape `1539` boundary (2026-10-11 20:23Z), bundle `ab7b8f1f`
+  (#224, 30-day rank history; its service code equals master `7a22dbb8`),
+  after the one-time rewrite in the
+  [rank-history retention runbook](../database/RankHistoryRetentionRewriteRunbook.md).
+  On the smaller tables, scrape `1540`'s composite rank-history snapshot took
+  168 seconds (342 to 373 in `1536` to `1539`), and all snapshots 399 seconds
+  (491 to 602).
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
