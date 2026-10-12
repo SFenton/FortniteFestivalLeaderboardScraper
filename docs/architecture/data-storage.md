@@ -921,6 +921,13 @@ The one-time reduction completed on 2026-10-11: the 10 tables went from
 390.8 GB to 70.6 GB, and the dropped originals are archived (81.5 GB) under
 `fst-data/archives/rank-history-retention/`. No rewrite step is pending.
 
+The first daily delete ran in scrape `1542`'s cleanup on 2026-10-12, after
+publication. It moved every scope's cutoff to 2026-09-12 and deleted 11.75
+million rows (composite 4.61 million) in 8.5 minutes, one table at a time.
+The large solo tables took 22 to 79 seconds each and composite 2.4 minutes.
+This delays the next scrape's start once a day; the day's other scrapes
+skip the phase in milliseconds.
+
 ## Publication ownership
 
 Candidate writes do not become public merely because they were committed to a
