@@ -12,6 +12,9 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # its own AUTO_DISABLED tripwire.
 ExecStart=-/usr/bin/python3 tools/postgres-snapshot-archive-retire.py auto
 ExecStart=/usr/bin/python3 tools/postgres-snapshot-sparse-compact.py auto
+# Then delete archives whose child was dropped or compacted more than 24 hours
+# ago (any time; it skips while either AUTO_DISABLED file exists).
+ExecStart=/usr/bin/python3 tools/postgres-snapshot-archive-retire.py prune-archives
 Nice=10
 # Each step ends when the fetch window closes; compaction also stops after 150 minutes.
 TimeoutStartSec=6h

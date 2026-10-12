@@ -287,5 +287,110 @@ class AutoTests(unittest.TestCase):
                 setattr(retire, name, value)
 
 
+class PruneArchiveTests(unittest.TestCase):
+    NOW = retire.parse_utc("2026-10-13T12:00:00Z")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.saved = {name: getattr(retire, name) for name in ("ARCHIVE_ROOT", "LOCK_PATH", "AUTO_DISABLE_FILE")}
+        retire.ARCHIVE_ROOT = self.root
+        retire.LOCK_PATH = self.root / ".retirement.lock"
+        retire.AUTO_DISABLE_FILE = self.root / "AUTO_DISABLED"
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(retire, name, value)
+        self.tmp.cleanup()
+
+    def archive(self, manifest, relation, states, at, directory="Solo_Bass"):
+        path = manifest.parent / directory / f"{relation}.dump"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * 1024)
+        for state in states:
+            retire.append_manifest(manifest, {"relation": relation, "archive_path": str(path), "state": state,
+                                              "at": at})
+        return path
+
+    def prune(self, *extra):
+        args = retire.build_parser().parse_args(["prune-archives", *extra])
+        return retire.command_prune_archives(args, now=self.NOW)
+
+    def test_deletes_only_aged_archives_of_finished_children(self):
+        cycle = self.root / "cycle-200" / "manifest.jsonl"
+        compaction = self.root / "compaction" / "manifest.jsonl"
+        cycle.parent.mkdir(parents=True)
+        compaction.parent.mkdir(parents=True)
+        old_drop = self.archive(cycle, "s_old", ["archived", "dropped"], "2026-10-12T11:00:00Z")
+        new_drop = self.archive(cycle, "s_new", ["archived", "dropped"], "2026-10-13T01:00:00Z")
+        compacted = self.archive(compaction, "c_done", ["archived", "swapped", "compacted"], "2026-10-11T00:00:00Z")
+        swapped = self.archive(compaction, "c_open", ["archived", "swapped"], "2026-10-11T00:00:00Z")
+
+        self.assertEqual(self.prune(), 0)
+
+        self.assertFalse(old_drop.exists())
+        self.assertFalse(compacted.exists())
+        self.assertTrue(new_drop.exists())
+        self.assertTrue(swapped.exists())
+        entries = retire.read_manifest(cycle)
+        self.assertEqual(entries[-1]["state"], "archive_deleted")
+        self.assertEqual(entries[-1]["after_state"], "dropped")
+        self.assertEqual(entries[-1]["archive_deleted_bytes"], 1024)
+        # A deleted archive keeps its child retired, and a second pass deletes nothing more.
+        self.assertIn("s_old", retire.retired_relations(cycle))
+        before = cycle.read_text()
+        self.prune()
+        self.assertEqual(cycle.read_text(), before)
+
+    def test_restore_refuses_a_deleted_archive(self):
+        cycle = self.root / "cycle-201" / "manifest.jsonl"
+        cycle.parent.mkdir(parents=True)
+        self.archive(cycle, "s_old", ["archived", "dropped"], "2026-10-10T00:00:00Z")
+        self.prune()
+        entries = retire.read_manifest(cycle)
+        dropped = [e for e in entries if e["state"] == "dropped"][-1]
+        with self.assertRaisesRegex(retire.RetirementError, "deleted by archive retention"):
+            retire.require_archive(entries, dropped)
+
+    def test_a_retried_archive_at_the_same_path_is_restorable_after_an_older_deletion(self):
+        compaction = self.root / "compaction" / "manifest.jsonl"
+        compaction.parent.mkdir(parents=True)
+        path = self.archive(compaction, "c_retry", ["archived"], "2026-10-10T00:00:00Z")
+        self.prune()
+        self.assertFalse(path.exists())
+        # A later attempt for the unchanged child writes the same path again.
+        self.archive(compaction, "c_retry", ["archived", "swapped", "compacted"], "2026-10-13T11:00:00Z")
+        entries = retire.read_manifest(compaction)
+        compacted = [e for e in entries if e["state"] == "compacted"][-1]
+        self.assertEqual(retire.require_archive(entries, compacted), path)
+        self.prune()
+        self.assertTrue(path.exists())
+
+    def test_disable_files_and_dry_run_delete_nothing(self):
+        cycle = self.root / "cycle-202" / "manifest.jsonl"
+        cycle.parent.mkdir(parents=True)
+        path = self.archive(cycle, "s_old", ["archived", "dropped"], "2026-10-10T00:00:00Z")
+        (self.root / "compaction").mkdir()
+        (self.root / "compaction" / "AUTO_DISABLED").write_text("{}")
+        self.prune()
+        self.assertTrue(path.exists())
+        (self.root / "compaction" / "AUTO_DISABLED").unlink()
+        self.prune("--dry-run")
+        self.assertTrue(path.exists())
+        self.assertNotIn("archive_deleted", cycle.read_text())
+
+    def test_refuses_archives_outside_the_root(self):
+        cycle = self.root / "cycle-203" / "manifest.jsonl"
+        cycle.parent.mkdir(parents=True)
+        with tempfile.TemporaryDirectory() as other:
+            outside = pathlib.Path(other) / "elsewhere.dump"
+            outside.write_bytes(b"x")
+            retire.append_manifest(cycle, {"relation": "s", "archive_path": str(outside), "state": "dropped",
+                                           "at": "2026-10-10T00:00:00Z"})
+            with self.assertRaises(retire.RetirementError):
+                self.prune()
+            self.assertTrue(outside.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

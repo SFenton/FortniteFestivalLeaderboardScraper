@@ -18,6 +18,10 @@ Commands:
            only while the live scrape is network-bound; integrity failures
            write a disable file that only an operator clears
   restore  restore one retired child from its archive and re-attach it
+  prune-archives
+           delete retirement and compaction archives once their child has been
+           dropped, compacted, or restored for --max-age-hours (default 24);
+           skipped while either AUTO_DISABLED file exists
 """
 
 from __future__ import annotations
@@ -51,6 +55,13 @@ IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SERVICE_INFO_URL = "http://127.0.0.1:8081/api/service-info"
 AUTO_DISABLE_FILE = ARCHIVE_ROOT / "AUTO_DISABLED"
+# Archives are a short rollback window, not long-term storage.
+ARCHIVE_RETENTION_HOURS = 24.0
+# Last manifest state after which an archive may age out: the child was dropped
+# or compacted (the archive is its only rollback source until it ages out),
+# restored, or never mutated ("archived" with no later state). "swapped" (an
+# unverified compaction whose original is still kept as _cold) never ages out.
+PRUNABLE_ARCHIVE_STATES = frozenset({"archived", "dropped", "compacted", "restored"})
 # Network-bound leaderboard fetch sub-operations. Spool drains, index drops,
 # flushes, index builds, and every later phase read or write snapshots heavily,
 # so anything outside this allow-list closes the window.
@@ -370,6 +381,88 @@ def cycle_dir(cycle_id: int) -> pathlib.Path:
     return ARCHIVE_ROOT / f"cycle-{cycle_id}"
 
 
+def parse_utc(value: str) -> dt.datetime:
+    return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+
+
+def read_manifest(manifest: pathlib.Path) -> list[dict]:
+    return [json.loads(line) for line in manifest.read_text().splitlines() if line.strip()]
+
+
+def require_archive(entries: list[dict], entry: dict) -> pathlib.Path:
+    """The entry's archive, refusing clearly when retention deleted it. Archive
+    paths are reused by retried runs, so only a deletion recorded after this
+    entry counts."""
+    path = pathlib.Path(entry["archive_path"])
+    position = max(i for i, e in enumerate(entries) if e is entry)
+    deleted = [e for e in entries[position + 1:]
+               if e.get("archive_path") == str(path) and e.get("state") == "archive_deleted"]
+    if deleted:
+        raise RetirementError(f"archive {path.name} was deleted by archive retention at {deleted[-1]['at']}; "
+                              "this child can no longer be restored")
+    if not path.exists():
+        raise RetirementError(f"archive {path} is missing")
+    return path
+
+
+def expired_archives(entries: list[dict], now: dt.datetime, max_age: dt.timedelta) -> list[dict]:
+    """Latest manifest entry of each archive whose last state is prunable and older than max_age."""
+    latest: dict[str, dict] = {}
+    for entry in entries:
+        if entry.get("archive_path"):
+            latest[entry["archive_path"]] = entry
+    return [entry for entry in latest.values()
+            if entry["state"] in PRUNABLE_ARCHIVE_STATES and now - parse_utc(entry["at"]) >= max_age]
+
+
+def archive_manifests() -> list[pathlib.Path]:
+    manifests = sorted(ARCHIVE_ROOT.glob("cycle-*/manifest.jsonl"))
+    compaction = ARCHIVE_ROOT / "compaction" / "manifest.jsonl"
+    return manifests + ([compaction] if compaction.exists() else [])
+
+
+def command_prune_archives(args: argparse.Namespace, now: dt.datetime | None = None) -> int:
+    disabled = [f for f in (AUTO_DISABLE_FILE, ARCHIVE_ROOT / "compaction" / "AUTO_DISABLED") if f.exists()]
+    if disabled:
+        print(f"archive pruning skipped while {', '.join(str(f) for f in disabled)} exists", flush=True)
+        return 0
+    if args.max_age_hours < 0:
+        raise RetirementError("--max-age-hours must not be negative")
+    now = now or dt.datetime.now(dt.timezone.utc)
+    max_age = dt.timedelta(hours=args.max_age_hours)
+    root = ARCHIVE_ROOT.resolve()
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK_PATH.open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("a retirement or compaction run holds the lock; pruning next time", flush=True)
+            return 0
+        deleted = freed = 0
+        for manifest in archive_manifests():
+            for entry in expired_archives(read_manifest(manifest), now, max_age):
+                path = pathlib.Path(entry["archive_path"])
+                if not path.resolve().is_relative_to(root):
+                    raise RetirementError(f"manifest {manifest} names an archive outside {root}: {path}")
+                size = path.stat().st_size if path.exists() else 0
+                if args.dry_run:
+                    print(f"would delete {path} ({size / 1024**2:.1f} MiB, {entry['state']} at {entry['at']})")
+                else:
+                    path.unlink(missing_ok=True)
+                    append_manifest(manifest, {**entry, "state": "archive_deleted", "archive_deleted_bytes": size,
+                                               "after_state": entry["state"], "at": utcnow()})
+                    try:
+                        path.parent.rmdir()
+                    except OSError:
+                        pass
+                deleted += 1
+                freed += size
+        verb = "would delete" if args.dry_run else "deleted"
+        print(f"{utcnow()} archive pruning {verb} {deleted} archive(s), {freed / 1024**3:.1f} GiB "
+              f"(older than {args.max_age_hours:g} h)", flush=True)
+    return 0
+
+
 def command_plan(args: argparse.Namespace) -> int:
     children = load_cycle(args.cycle, args.expected_candidate_hash)
     rows = live_status(children)
@@ -485,13 +578,13 @@ def attach_restored(parent: str, relation: str, snapshot_id: int, sleep=time.sle
 
 def command_restore(args: argparse.Namespace) -> int:
     manifest = cycle_dir(args.cycle) / "manifest.jsonl"
-    entries = [json.loads(line) for line in manifest.read_text().splitlines()]
+    entries = read_manifest(manifest)
     matches = [e for e in entries if e["relation"] == args.relation and e["state"] == "dropped"]
     if not matches:
         raise RetirementError("relation has no dropped manifest entry")
     entry = matches[-1]
     child = parse_child(entry["identity"])
-    path = pathlib.Path(entry["archive_path"])
+    path = require_archive(entries, entry)
     if sha256_file(path) != entry["archive_sha256"]:
         raise RetirementError("archive checksum does not match the manifest")
     relation = f"{child['schema']}.{child['relation']}"
@@ -637,6 +730,9 @@ def build_parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("restore")
     restore.add_argument("--cycle", type=int, required=True)
     restore.add_argument("--relation", required=True)
+    prune = sub.add_parser("prune-archives")
+    prune.add_argument("--max-age-hours", type=float, default=ARCHIVE_RETENTION_HOURS)
+    prune.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -649,6 +745,8 @@ def main(argv: list[str] | None = None) -> int:
             return command_retire(args)
         if args.command == "auto":
             return command_auto(args)
+        if args.command == "prune-archives":
+            return command_prune_archives(args)
         return command_restore(args)
     except RetirementError as error:
         print(f"refused: {error}", file=sys.stderr, flush=True)

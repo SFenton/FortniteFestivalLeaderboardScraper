@@ -1655,9 +1655,15 @@ public static class DatabaseInitializer
         -- Same-day rank-history updates are HOT only when the row's page has free
         -- space; 30% free space lets most of a day's updates stay on-page
         -- instead of writing new primary-key entries. Only new pages are
-        -- affected. Guarded so startup takes no lock when already set.
+        -- affected. Autovacuum runs at 2% dead rows instead of 20%, so the space
+        -- the daily retention delete and same-day updates free is reused before
+        -- the next day's rows arrive. Guarded so startup takes no lock when set;
+        -- otherwise each table waits at most 2 s (a manual or anti-wraparound
+        -- vacuum holds a conflicting lock) and is left for a later start.
         DO $$
-        DECLARE target regclass;
+        DECLARE
+            target regclass;
+            previous_lock_timeout TEXT := current_setting('lock_timeout');
         BEGIN
             FOREACH target IN ARRAY ARRAY[
                 'rank_history_solo_guitar', 'rank_history_solo_bass', 'rank_history_solo_drums',
@@ -1667,9 +1673,19 @@ public static class DatabaseInitializer
             LOOP
                 IF NOT EXISTS (
                     SELECT 1 FROM pg_class
-                    WHERE oid = target AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
+                    WHERE oid = target
+                      AND COALESCE(reloptions, ARRAY[]::TEXT[])
+                          @> ARRAY['fillfactor=70', 'autovacuum_vacuum_scale_factor=0.02'])
                 THEN
-                    EXECUTE format('ALTER TABLE %s SET (fillfactor=70)', target);
+                    BEGIN
+                        PERFORM set_config('lock_timeout', '2s', true);
+                        EXECUTE format(
+                            'ALTER TABLE %s SET (fillfactor=70, autovacuum_vacuum_scale_factor=0.02)', target);
+                        PERFORM set_config('lock_timeout', previous_lock_timeout, true);
+                    EXCEPTION WHEN lock_not_available THEN
+                        PERFORM set_config('lock_timeout', previous_lock_timeout, true);
+                        RAISE NOTICE '% is busy; its storage options are left for a later start', target;
+                    END;
                 END IF;
             END LOOP;
         END $$;
@@ -3138,14 +3154,21 @@ public static class DatabaseInitializer
 
         -- See the rank_history partitions above.
         DO $$
+        DECLARE
+            previous_lock_timeout TEXT := current_setting('lock_timeout');
         BEGIN
             IF NOT EXISTS (
                 SELECT 1 FROM pg_class
                 WHERE oid = 'composite_rank_history'::regclass
-                  AND 'fillfactor=70' = ANY (COALESCE(reloptions, ARRAY[]::TEXT[])))
+                  AND COALESCE(reloptions, ARRAY[]::TEXT[])
+                      @> ARRAY['fillfactor=70', 'autovacuum_vacuum_scale_factor=0.02'])
             THEN
-                ALTER TABLE composite_rank_history SET (fillfactor=70);
+                PERFORM set_config('lock_timeout', '2s', true);
+                ALTER TABLE composite_rank_history SET (fillfactor=70, autovacuum_vacuum_scale_factor=0.02);
+                PERFORM set_config('lock_timeout', previous_lock_timeout, true);
             END IF;
+        EXCEPTION WHEN lock_not_available THEN
+            RAISE NOTICE 'composite_rank_history is busy; its storage options are left for a later start';
         END $$;
         -- See ix_rh_retention_cutoff_brin: small heaps only, bounded lock wait.
         DO $$

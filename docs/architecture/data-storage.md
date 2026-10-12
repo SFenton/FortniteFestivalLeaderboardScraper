@@ -248,8 +248,10 @@ Retired candidate children are removed by the operator-only
 which archives each child as a zstd `pg_dump` on the FST drive under
 `fst-data/archives/snapshot-generations/cycle-<id>/` with a `manifest.jsonl`
 (identity, row count, content fingerprint, archive SHA-256) before a
-lock-bounded detach and non-cascading drop. Those archives are the retained
-copy of retired generations; `restore` re-creates and re-attaches a child.
+lock-bounded detach and non-cascading drop. Those archives (and compaction's,
+under `compaction/`) are kept for 24 hours after the child is dropped or
+compacted, then deleted by `prune-archives`; within that time `restore`
+re-creates and re-attaches a child. Older retired generations are not kept.
 
 ### Freeze-safe publication API cache
 
@@ -883,6 +885,14 @@ takes no lock otherwise. It affects pages written afterwards: a new day's rows
 take about 43% more heap, and same-day updates write fewer index entries, less
 WAL and fewer dead tuples. `ALTER TABLE <table> RESET (fillfactor)` reverts a
 table; rows already written keep their layout.
+
+The same tables use `autovacuum_vacuum_scale_factor = 0.02` (since
+2026-10-12): autovacuum runs once dead rows reach 2% of a table instead of the
+default 20%. With 30-day retention the live row count is flat, but the daily
+delete and same-day updates leave dead rows that only vacuum makes reusable.
+In the first day after the rewrite, with no vacuum yet, the tables grew from
+70.6 to 78.5 GB at a constant row count. The initializer sets both options
+together under the same guard.
 
 On 2026-10-11, the first day written with the new layout, the intra-day
 scrapes `1528` and `1529` updated 74 to 87% of history rows in place

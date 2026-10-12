@@ -591,7 +591,9 @@ retention package.
 Snapshot archive retirement (`tools/postgres-snapshot-archive-retire.py`,
 including its automatic mode) has hermetic unit tests for identity parsing,
 liveness eligibility, lock-bounded detach, the network-bound window allow-list,
-cycle binding, transient deferral, and the `AUTO_DISABLED` tripwire:
+cycle binding, transient deferral, the `AUTO_DISABLED` tripwire, and 24-hour
+archive pruning (aged finished archives only, kept `swapped` archives,
+disable-file and dry-run no-ops, restore refusal after deletion):
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 tools/postgres-snapshot-archive-retire.test.py
