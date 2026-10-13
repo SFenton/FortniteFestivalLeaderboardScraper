@@ -381,6 +381,68 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
     }
 
     [Fact]
+    public async Task Band_songs_read_is_captured_under_profile_invariant_route_key()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var json = Encoding.UTF8.GetBytes(
+            "{\"bandType\":\"Band_Duets\",\"best\":[],\"worst\":[]}");
+        fixture.MetaDb.TrySetCurrentCachedResponse(
+                42,
+                Arg.Any<string>(),
+                Arg.Is<byte[]>(bytes =>
+                    bytes.SequenceEqual(json)),
+                ResponseCacheService.ComputeETag(json))
+            .Returns(Cached(json));
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                context.Response.StatusCode =
+                    StatusCodes.Status200OK;
+                context.Response.ContentType =
+                    "application/json; charset=utf-8";
+                await context.Response.Body.WriteAsync(json);
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance,
+            TimeSpan.FromMilliseconds(100));
+        var context = Context(
+            "/api/rankings/bands/Band_Duets/"
+            + "team%3Aa%3Ab/songs?limit=5",
+            "/api/rankings/bands/{bandType}/{teamKey}/songs");
+        context.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "band";
+        context.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTeamKeyHeader] =
+            "team:a:b";
+        var expectedKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                context.Request);
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            Encoding.UTF8.GetString(json),
+            await Body(context));
+        Assert.Equal(
+            "build",
+            context.Response.Headers[
+                "X-FST-Public-Cache"]);
+        fixture.MetaDb.Received(1)
+            .TrySetCurrentCachedResponse(
+                42,
+                expectedKey,
+                Arg.Any<byte[]>(),
+                ResponseCacheService.ComputeETag(json));
+    }
+
+    [Fact]
     public async Task Slow_lazy_build_is_served_but_not_stored()
     {
         var fixture = Fixture(

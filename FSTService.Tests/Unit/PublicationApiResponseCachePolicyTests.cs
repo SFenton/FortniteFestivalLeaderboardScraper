@@ -253,6 +253,89 @@ public sealed class PublicationApiResponseCachePolicyTests
                 selected.Request));
     }
 
+    [Theory]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab/history",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab/songs?limit=5",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab/song-rows",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar/account-1",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar/account-1/neighborhood",
+        "public, max-age=300, stale-while-revalidate=600")]
+    [InlineData(
+        "/api/rankings/composite/account-1",
+        "public, max-age=300")]
+    [InlineData(
+        "/api/rankings/composite/account-1/neighborhood",
+        "public, max-age=300, stale-while-revalidate=600")]
+    public void Identity_scoped_profile_reads_share_cache_key_across_selected_profiles(
+        string target,
+        string expectedCacheControl)
+    {
+        var plain = Context(target);
+        var selected = Context(target);
+        selected.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "band";
+        selected.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileIdHeader] =
+            "selected-band-id";
+        selected.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTypeHeader] =
+            "Band_Duets";
+        selected.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTeamKeyHeader] =
+            "team:a:b";
+
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                plain,
+                out var plan));
+        Assert.True(plan.FreezeCritical);
+        Assert.True(plan.AllowWriteThrough);
+        Assert.Equal(
+            expectedCacheControl,
+            plan.ResponseCacheControl);
+        Assert.Equal(
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                plain.Request),
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                selected.Request));
+    }
+
+    [Theory]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab/songs?limit=10")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab/songs?limit=5&combo=Solo_Guitar")]
+    [InlineData(
+        "/api/rankings/bands/Band_Duets/team%3Aa%3Ab/history?days=30")]
+    [InlineData(
+        "/api/rankings/Solo_Guitar/account-1/neighborhood?radius=5")]
+    [InlineData("/api/rankings/bands/Band_Duets/combos")]
+    public void Identity_scoped_profile_cache_excludes_nondefault_variants(
+        string target)
+    {
+        var context = Context(target);
+
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                context,
+                out var plan));
+        Assert.False(plan.FreezeCritical);
+        Assert.False(plan.AllowWriteThrough);
+    }
+
     private static DefaultHttpContext Context(
         string target,
         object[]? endpointMetadata = null)

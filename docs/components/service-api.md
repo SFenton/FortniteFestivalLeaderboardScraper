@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-29
+last_verified: 2026-10-13
 last_verified_commit: 1efdf69d
 sources:
   - FSTService/Program.cs
@@ -29,6 +29,9 @@ sources:
   - FSTService/Api/SongEndpoints.cs
   - FSTService/Scraping/PathArtifactResolver.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCachePolicyTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheMiddlewareTests.cs
+  - FSTService.Tests/Integration/ApiEndpointIntegrationTests.cs
   - FSTService/Api/PublicationChangeMonitorService.cs
   - FSTService/SongCatalogRefreshWorker.cs
   - FSTService/Persistence/MetaDatabase.cs
@@ -293,20 +296,28 @@ concatenating cached JSON directly.
 Freeze-critical coverage is intentionally bounded: `/api/songs`, page-1
 per-instrument/composite/generic-band rankings, overview bootstrap sizes,
 registered-player default profiles, top-10 song/instrument leaderboards, and
-existing leaderboard-all/song-band bootstrap rows. Request aliases resolve
-canonical precompute keys and project contained page windows without duplicating
-large JSON rows. Selected account/team overlays, arbitrary pages/filters,
-search/history/notification variants, paths, shop, operational, private, and
-WebSocket routes keep their established owners.
+existing leaderboard-all/song-band bootstrap rows. Exact identity-scoped band
+profile, history, best/worst-song (`limit=5`), and song-row reads plus player
+ranking, neighborhood, and composite-profile reads may retain a successful
+default response under the exact route key. The URL identifies the profile,
+so selected-profile headers do not split these keys. Only bounded default
+request shapes are eligible; selected overlays, arbitrary pages/filters,
+search/notification variants, paths, shop, operational, private, and WebSocket
+routes keep their established owners. Canonical ranking aliases continue to
+resolve only their exact precomputed rows and contained page windows.
 
 During any required-cache freeze, covered routes perform L1/L2 reads only. A
 hit returns `200`/`304`; a miss returns `503` with `Retry-After: 30` and never
-builds or writes. Cache hits retain each covered endpoint family's
+builds or writes. Unfrozen identity-scoped responses are captured only after a
+successful endpoint read that stays within the same publication, one-second,
+and 2 MiB limits. Cache hits retain each covered endpoint family's
 `Cache-Control`, content type, ETag, publication header, and exact response
-bytes. Unfrozen overview sizes `25` and `50` are the only lazy
-write-through variants. They use process single-flight, store only successful
-JSON responses whose measured build is below one second, and reject slow,
-oversized, failed, or transition-raced builds without poisoning L2.
+bytes. Unfrozen overview sizes `25` and `50` are the only derived variants
+built from another canonical payload. Identity-scoped profile responses are
+instead captured from their exact successful endpoint read. Both paths use
+process single-flight, store only successful JSON responses whose measured
+build is below one second, and reject slow, oversized, failed, or
+transition-raced builds without poisoning L2.
 Every post-wait lookup passes the authoritative publication/source readiness
 gate before `TryServeHitAsync`; a waiter cannot serve an invalid row populated by
 another request.

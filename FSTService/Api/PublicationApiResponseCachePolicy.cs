@@ -134,6 +134,14 @@ internal static class PublicApiResponseCachePolicy
             responseCacheControl =
                 "public, max-age=1800, stale-while-revalidate=3600";
         }
+        else if (TryPlanIdentityScopedProfileRead(
+                     request,
+                     segments,
+                     out responseCacheControl))
+        {
+            freezeCritical = true;
+            allowWriteThrough = true;
+        }
         else if (TryPlanPlayer(
                      request,
                      segments,
@@ -251,6 +259,129 @@ internal static class PublicApiResponseCachePolicy
 
         cacheKey = BuildCacheKey(request);
         return true;
+    }
+
+    private static bool TryPlanIdentityScopedProfileRead(
+        HttpRequest request,
+        string[] segments,
+        out string? responseCacheControl)
+    {
+        responseCacheControl = null;
+        if (segments.Length < 4
+            || !string.Equals(
+                segments[0],
+                "api",
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                segments[1],
+                "rankings",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.Equals(
+                segments[2],
+                "bands",
+                StringComparison.OrdinalIgnoreCase)
+            && BandComboIds.IsValidBandType(segments[3]))
+        {
+            if (segments.Length == 5
+                && !string.Equals(
+                    segments[4],
+                    "combos",
+                    StringComparison.OrdinalIgnoreCase)
+                && OnlyQueryKeys(request))
+            {
+                responseCacheControl = "public, max-age=300";
+                return true;
+            }
+
+            if (segments.Length == 6
+                && OnlyQueryKeys(request)
+                && (string.Equals(
+                        segments[5],
+                        "history",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(
+                        segments[5],
+                        "song-rows",
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                responseCacheControl = "public, max-age=300";
+                return true;
+            }
+
+            if (segments.Length == 6
+                && string.Equals(
+                    segments[5],
+                    "songs",
+                    StringComparison.OrdinalIgnoreCase)
+                && OnlyQueryKeys(request, "limit")
+                && TryQueryInt(
+                    request,
+                    "limit",
+                    5,
+                    out var limit)
+                && limit == 5)
+            {
+                responseCacheControl = "public, max-age=300";
+                return true;
+            }
+
+            return false;
+        }
+
+        if (GlobalLeaderboardPersistence.TryGetCanonicalInstrument(
+                segments[2],
+                out _))
+        {
+            if (segments.Length == 4
+                && OnlyQueryKeys(request))
+            {
+                responseCacheControl = "public, max-age=300";
+                return true;
+            }
+
+            if (segments.Length == 5
+                && string.Equals(
+                    segments[4],
+                    "neighborhood",
+                    StringComparison.OrdinalIgnoreCase)
+                && OnlyQueryKeys(request))
+            {
+                responseCacheControl =
+                    "public, max-age=300, stale-while-revalidate=600";
+                return true;
+            }
+        }
+
+        if (string.Equals(
+                segments[2],
+                "composite",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            if (segments.Length == 4
+                && OnlyQueryKeys(request))
+            {
+                responseCacheControl = "public, max-age=300";
+                return true;
+            }
+
+            if (segments.Length == 5
+                && string.Equals(
+                    segments[4],
+                    "neighborhood",
+                    StringComparison.OrdinalIgnoreCase)
+                && OnlyQueryKeys(request))
+            {
+                responseCacheControl =
+                    "public, max-age=300, stale-while-revalidate=600";
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -730,7 +861,7 @@ internal static class PublicApiResponseCachePolicy
                 "rankings",
                 StringComparison.OrdinalIgnoreCase))
         {
-            return segments.Length == 3
+            if (segments.Length == 3
                 && (GlobalLeaderboardPersistence
                         .IsValidInstrument(segments[2])
                     || string.Equals(
@@ -740,14 +871,63 @@ internal static class PublicApiResponseCachePolicy
                     || string.Equals(
                         segments[2],
                         "composite",
-                        StringComparison.OrdinalIgnoreCase))
-                || segments.Length == 4
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            if (segments.Length >= 4
                 && string.Equals(
                     segments[2],
                     "bands",
                     StringComparison.OrdinalIgnoreCase)
                 && BandComboIds.IsValidBandType(
-                    segments[3]);
+                    segments[3]))
+            {
+                return segments.Length == 4
+                    || segments.Length == 5
+                    || segments.Length == 6
+                    && (string.Equals(
+                            segments[5],
+                            "history",
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            segments[5],
+                            "songs",
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            segments[5],
+                            "song-rows",
+                            StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (GlobalLeaderboardPersistence
+                    .TryGetCanonicalInstrument(
+                        segments[2],
+                        out _))
+            {
+                return segments.Length == 4
+                    || segments.Length == 5
+                    && (string.Equals(
+                            segments[4],
+                            "history",
+                            StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(
+                            segments[4],
+                            "neighborhood",
+                            StringComparison.OrdinalIgnoreCase));
+            }
+
+            return string.Equals(
+                       segments[2],
+                       "composite",
+                       StringComparison.OrdinalIgnoreCase)
+                   && (segments.Length == 4
+                       || segments.Length == 5
+                       && string.Equals(
+                           segments[4],
+                           "neighborhood",
+                           StringComparison.OrdinalIgnoreCase));
         }
 
         return string.Equals(

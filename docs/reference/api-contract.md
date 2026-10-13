@@ -1,7 +1,7 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-29
+last_verified: 2026-10-13
 last_verified_commit: 2f299474
 sources:
   - FSTService/Api/ApiEndpoints.cs
@@ -36,6 +36,9 @@ sources:
   - FSTService/Api/AdminEndpoints.cs
   - FSTService/Scraping/ItemShopService.cs
   - FSTService/Api/SelectedProfileActivityMiddleware.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCachePolicyTests.cs
+  - FSTService.Tests/Unit/PublicationApiResponseCacheMiddlewareTests.cs
+  - FSTService.Tests/Integration/ApiEndpointIntegrationTests.cs
   - FSTService.Tests/Integration/ApiPublicationClassificationTests.cs
   - FSTService/Api/FeedbackEndpoints.cs
   - packages/core/src/api/serverTypes.ts
@@ -298,17 +301,29 @@ Aggregate player scopes intentionally use different formulas:
   sizes up to 10 resolve existing canonical rows and deterministically project
   the requested contained window. Registered-player default profiles,
   top-10 per-instrument leaderboards, leaderboard-all, and song-band bootstrap
-  reads use their canonical eager rows. Selected/high-cardinality variants are
-  excluded and cannot fall through to a generic canonical alias. Covered hits
-  preserve the endpoint family's `Cache-Control` and content type. Direct,
-  precomputed, and projected JSON use the same explicit relaxed Unicode
-  encoder so non-ASCII strings preserve exact UTF-8 bytes and ETags.
-- Only overview `pageSize=25|50` for the five canonical ranking metrics may
-  lazily compute and write through while unfrozen. One process-local
-  single-flight owns each publication/key build. Case, query order, and
-  equivalent integer spellings normalize to one semantic key. Responses at or above one
-  second, over 2 MiB, non-200, non-JSON, failed, or raced by a freeze are served
-  if otherwise valid but are not cached.
+  reads use their canonical eager rows. Exact identity-scoped band profile,
+  history, best/worst-song (`limit=5`), and song-row reads plus player ranking,
+  neighborhood, and composite-profile reads may retain a successful default
+  response under the exact route key. The path identifies the requested
+  profile, so selected-profile headers do not split these keys. Only the
+  bounded default request shapes are eligible; selected account/team overlays,
+  arbitrary pages/filters, and other high-cardinality variants cannot fall
+  through to a generic canonical alias. Covered hits preserve the endpoint
+  family's `Cache-Control` and content type. Direct, precomputed, and projected
+  JSON use the same explicit relaxed Unicode encoder so non-ASCII strings
+  preserve exact UTF-8 bytes and ETags.
+- Overview `pageSize=25|50` for the five canonical ranking metrics are the
+  only derived variants built from another canonical payload. They and
+  identity-scoped response captures use process-local single-flight per
+  publication/key. Case, query order, and equivalent integer spellings
+  normalize to one semantic key. Responses at or above one second, over 2 MiB,
+  non-200, non-JSON, failed, or raced by a freeze are served if otherwise
+  valid but are not cached.
+- Identity-scoped profile responses are captured only from a successful
+  unfrozen endpoint read and only when the response remains within the same
+  publication, one-second, and 2 MiB limits. During a freeze, these routes are
+  read-only from L1/L2; a cold cache miss remains unavailable rather than
+  reading candidate projection state.
 - During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
   covered publication-bound route may serve only an existing L1/L2 published
   cache hit; the cache never builds or writes while frozen.

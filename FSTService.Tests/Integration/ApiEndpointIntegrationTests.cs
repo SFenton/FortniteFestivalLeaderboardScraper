@@ -999,6 +999,113 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task FrozenBandSongs_ServesLastPublishedCacheWithoutSelectedProfileHeaders()
+    {
+        const string target =
+            "/api/rankings/bands/Band_Duets/"
+            + "cachedMember%3AcachedMate/songs?limit=5";
+        var metaDb =
+            _factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var publicationId =
+            pointers.CurrentPublicationId!.Value;
+        var publishedScrapeId =
+            pointers.PublishedScrapeId!.Value;
+        var dataSource =
+            _factory.Services.GetRequiredService<NpgsqlDataSource>();
+        var gate =
+            _factory.Services.GetRequiredService<PublicReadGateService>();
+        var cache =
+            _factory.Services.GetRequiredService<
+                PublicationApiResponseCacheService>();
+
+        var selectedRequest = new DefaultHttpContext();
+        selectedRequest.Request.Method = HttpMethods.Get;
+        var separator = target.IndexOf('?');
+        selectedRequest.Request.Path = target[..separator];
+        selectedRequest.Request.QueryString =
+            new QueryString(target[separator..]);
+        selectedRequest.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileTypeHeader] =
+            "band";
+        selectedRequest.Request.Headers[
+            SelectedProfileHeaders.SelectedProfileIdHeader] =
+            "selected-band-id";
+        selectedRequest.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTypeHeader] =
+            "Band_Duets";
+        selectedRequest.Request.Headers[
+            SelectedProfileHeaders.SelectedBandTeamKeyHeader] =
+            "cachedMember:cachedMate";
+        var selectedKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                selectedRequest.Request);
+        var nativeKey =
+            PublicApiResponseCachePolicy
+                .BuildCacheKeyForRequestTarget(target);
+        Assert.Equal(selectedKey, nativeKey);
+
+        var expected = Encoding.UTF8.GetBytes(
+            """
+            {"bandType":"Band_Duets","teamKey":"cachedMember:cachedMate","limit":5,"best":[{"songId":"last-published-best"}],"worst":[{"songId":"last-published-worst"}]}
+            """);
+        DeleteCacheKeys(
+            dataSource,
+            publicationId,
+            [nativeKey]);
+        ClearPublicReadFreezeForTest(dataSource);
+        gate.Invalidate();
+        cache.Reset();
+        metaDb.BulkSetCachedResponses(
+        [
+            (
+                Key: selectedKey,
+                Json: expected,
+                ETag: ResponseCacheService.ComputeETag(
+                    expected)),
+        ]);
+        metaDb.SetPublicReadFreeze(
+            true,
+            publishedScrapeId,
+            "scrape");
+        gate.Invalidate();
+        cache.Reset();
+
+        try
+        {
+            using var response = await _client.GetAsync(target);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(
+                "l2",
+                response.Headers.GetValues(
+                    "X-FST-Public-Cache-Tier")
+                    .Single());
+            Assert.Equal(
+                publicationId.ToString(
+                    System.Globalization.CultureInfo
+                        .InvariantCulture),
+                response.Headers.GetValues(
+                    PublicationReadContextMiddleware
+                        .PublicationHeader)
+                    .Single());
+            Assert.Equal(
+                expected,
+                await response.Content.ReadAsByteArrayAsync());
+        }
+        finally
+        {
+            ClearPublicReadFreezeForTest(dataSource);
+            gate.Invalidate();
+            cache.Reset();
+            DeleteCacheKeys(
+                dataSource,
+                publicationId,
+                [nativeKey]);
+        }
+    }
+
+    [Fact]
     public async Task ProtectedTelemetryAuthenticationExecutesBeforePublicationCache()
     {
         const string target =
