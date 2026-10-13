@@ -2,7 +2,7 @@
 status: canonical
 owner: service
 last_verified: 2026-10-13
-last_verified_commit: 1efdf69d
+last_verified_commit: 8f3e7916
 sources:
   - FSTService/Program.cs
   - FSTService/StartupPublicationReadOnlyState.cs
