@@ -167,7 +167,8 @@ public sealed class PublicationApiResponseCacheService
         long expectedPublicationId,
         string cacheKey,
         byte[] json,
-        string etag)
+        string etag,
+        bool requireWrittenForPublication = false)
     {
         var before = _gate.GetCacheSafetySnapshot();
         if (before.IsFrozen
@@ -195,6 +196,10 @@ public sealed class PublicationApiResponseCacheService
         if (existing is not null
             && existing.PublicationId
                 == expectedPublicationId
+            && (!requireWrittenForPublication
+                || WrittenForPublication(
+                    existing.PublishedAtUtc,
+                    existing.CachedAtUtc))
             && string.Equals(
                 existing.ETag,
                 etag,
@@ -246,6 +251,17 @@ public sealed class PublicationApiResponseCacheService
         InvalidateAll();
         return stored;
     }
+
+    /// <summary>
+    /// True when a row was written after its publication was published, so
+    /// it was not inherited from an earlier publication's cache.
+    /// </summary>
+    public static bool WrittenForPublication(
+        DateTime? publishedAtUtc,
+        DateTime? cachedAtUtc) =>
+        publishedAtUtc.HasValue
+        && cachedAtUtc.HasValue
+        && cachedAtUtc.Value >= publishedAtUtc.Value;
 
     public async ValueTask<PublicationApiCacheBuildLease>
         AcquireBuildLeaseAsync(

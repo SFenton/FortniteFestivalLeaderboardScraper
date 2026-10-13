@@ -9306,6 +9306,125 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Rankings_BandSongs_ServeLastPublishedBestAndWorstWhileProjectionIsUnpromotedOrFrozen()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        using var scope = factory.Services.CreateScope();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+        var metaDb = factory.Services.GetRequiredService<MetaDatabase>();
+        var gate = factory.Services.GetRequiredService<PublicReadGateService>();
+        var projectionBuilder = scope.ServiceProvider.GetRequiredService<BandCurrentProjectionBuilder>();
+        await projectionBuilder.EnsureSchemaAsync();
+        if (!metaDb.GetPublicationPointerState().CurrentPublicationId.HasValue)
+        {
+            var scrapeId = metaDb.StartScrapeRun();
+            metaDb.CompleteScrapeRun(scrapeId, 1, 1, 1, 1);
+            metaDb.PublishScrapeRun(scrapeId, promoteCachedResponses: false);
+        }
+
+        const string bandType = "Band_Duets";
+        var targetTeam = $"{Guid.NewGuid():N}:{Guid.NewGuid():N}";
+        var unseenTeam = $"{Guid.NewGuid():N}:{Guid.NewGuid():N}";
+        var competitorTeam = $"{Guid.NewGuid():N}:{Guid.NewGuid():N}";
+        var bestSong = $"fallback_best_{Guid.NewGuid():N}";
+        var worstSong = $"fallback_worst_{Guid.NewGuid():N}";
+        var bandPersistence = new BandLeaderboardPersistence(
+            dataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries(bestSong, bandType,
+        [
+            CreateBandEntry(targetTeam, "0:1", 1_200),
+            CreateBandEntry(unseenTeam, "0:1", 1_100),
+            CreateBandEntry(competitorTeam, "0:1", 800),
+        ]);
+        bandPersistence.UpsertBandEntries(worstSong, bandType,
+        [
+            CreateBandEntry(targetTeam, "0:1", 700),
+            CreateBandEntry(unseenTeam, "0:1", 600),
+            CreateBandEntry(competitorTeam, "0:1", 1_000),
+        ]);
+        var refresh = await projectionBuilder.RefreshScopesAsync(
+            [
+                new BandCurrentProjectionScopeKey(bestSong, bandType, "overall", string.Empty),
+                new BandCurrentProjectionScopeKey(worstSong, bandType, "overall", string.Empty),
+            ],
+            new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = false });
+        Assert.True(refresh.PublishResult.Published);
+        var generation = Assert.Single(refresh.Scopes.Select(static result => result.Generation).Distinct());
+
+        void SetPublishedBandGeneration(long? value)
+        {
+            using var conn = dataSource.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                UPDATE scrape_publication_state
+                SET band_projection_generation = @generation,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            cmd.Parameters.AddWithValue("generation", (object?)value ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+
+        var songsUrl = $"/api/rankings/bands/{bandType}/{Uri.EscapeDataString(targetTeam)}/songs?limit=1";
+        var unseenUrl = $"/api/rankings/bands/{bandType}/{Uri.EscapeDataString(unseenTeam)}/songs?limit=1";
+        SetPublishedBandGeneration(generation);
+        try
+        {
+            using var published = await client.GetAsync(songsUrl);
+            Assert.Equal(HttpStatusCode.OK, published.StatusCode);
+            Assert.Equal("build", published.Headers.GetValues("X-FST-Public-Cache").Single());
+            var publishedBody = await published.Content.ReadAsStringAsync();
+            using (var document = JsonDocument.Parse(publishedBody))
+            {
+                Assert.Contains(
+                    document.RootElement.GetProperty("best").EnumerateArray(),
+                    row => row.GetProperty("songId").GetString() == bestSong);
+                Assert.Contains(
+                    document.RootElement.GetProperty("worst").EnumerateArray(),
+                    row => row.GetProperty("songId").GetString() == worstSong);
+            }
+
+            // Post-processing advances the band projection before the
+            // publication commit promotes it, so the live read is unavailable.
+            SetPublishedBandGeneration(generation - 1);
+            using (var unpromoted = await client.GetAsync(songsUrl))
+            {
+                Assert.Equal(HttpStatusCode.OK, unpromoted.StatusCode);
+                Assert.Equal("fallback", unpromoted.Headers.GetValues("X-FST-Public-Cache").Single());
+                Assert.Equal(publishedBody, await unpromoted.Content.ReadAsStringAsync());
+            }
+
+            using (var neverPublished = await client.GetAsync(unseenUrl))
+            {
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, neverPublished.StatusCode);
+                Assert.Equal("30", Assert.Single(neverPublished.Headers.GetValues("Retry-After")));
+            }
+
+            metaDb.SetPublicReadFreeze(true, reason: "post-process");
+            gate.Invalidate();
+            using (var frozen = await client.GetAsync(songsUrl))
+            {
+                Assert.Equal(HttpStatusCode.OK, frozen.StatusCode);
+                Assert.Equal("hit", frozen.Headers.GetValues("X-FST-Public-Cache").Single());
+                Assert.Equal(publishedBody, await frozen.Content.ReadAsStringAsync());
+            }
+
+            using (var frozenMiss = await client.GetAsync(unseenUrl))
+            {
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, frozenMiss.StatusCode);
+            }
+        }
+        finally
+        {
+            metaDb.SetPublicReadFreeze(false);
+            gate.Invalidate();
+            SetPublishedBandGeneration(generation);
+        }
+    }
+
+    [Fact]
     public async Task Rankings_BandSongs_FailedCandidateStaysExactAndSuccessfulPublishAdvancesAtomically()
     {
         using var factory = _factory.WithWebHostBuilder(_ => { });

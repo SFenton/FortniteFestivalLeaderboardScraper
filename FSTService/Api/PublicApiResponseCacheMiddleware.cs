@@ -198,7 +198,8 @@ public sealed class PublicApiResponseCacheMiddleware
         }
 
         if (!safety.IsFrozen
-            && plan.FreezeCritical
+            && (plan.FreezeCritical
+                || plan.UnavailableFallback)
             && plan.AllowWriteThrough
             && cacheService is not null
             && cacheService.CurrentPublicationId
@@ -256,6 +257,17 @@ public sealed class PublicApiResponseCacheMiddleware
                 safety);
         }
 
+        if (hit is not null
+            && plan.UnavailableFallback
+            && !PublicationApiResponseCacheService
+                .WrittenForPublication(
+                    hit.Value.PublishedAtUtc,
+                    hit.Value.CachedAtUtc))
+        {
+            // An inherited row may hold an older publication's band data.
+            return null;
+        }
+
         if (hit is null || publicationService is null)
             return hit;
 
@@ -284,7 +296,8 @@ public sealed class PublicApiResponseCacheMiddleware
         PublicApiCacheTelemetry telemetry,
         PublicApiCacheRequestPlan plan,
         PublicationApiCacheHit hit,
-        PublicationReadContextService? publicationService)
+        PublicationReadContextService? publicationService,
+        string cacheHeaderValue = "hit")
     {
         var cached = new PublicationCachedResponse(
             hit.PublicationId,
@@ -316,7 +329,7 @@ public sealed class PublicApiResponseCacheMiddleware
             context,
             cached);
         context.Response.Headers[
-            "X-FST-Public-Cache"] = "hit";
+            "X-FST-Public-Cache"] = cacheHeaderValue;
         context.Response.Headers[
             "X-FST-Public-Cache-Tier"] =
             hit.Tier == PublicationApiCacheTier.L1
@@ -345,6 +358,60 @@ public sealed class PublicApiResponseCacheMiddleware
             metaDb,
             gate);
         return true;
+    }
+
+    /// <summary>
+    /// Replaces a buffered endpoint 503 with the last good response stored
+    /// for the current publication. Returns false, leaving the 503 intact,
+    /// when no such response exists (a real outage or a never-viewed team).
+    /// </summary>
+    private async Task<bool> TryServeUnavailableFallbackAsync(
+        HttpContext context,
+        IMetaDatabase metaDb,
+        PublicReadGateService gate,
+        PublicApiCacheTelemetry telemetry,
+        PublicationApiResponseCacheService cacheService,
+        PublicApiCacheRequestPlan plan,
+        PublicationReadContextService? publicationService)
+    {
+        if (context.Response.HasStarted)
+            return false;
+
+        var fallback = TryGetServiceHit(
+            context,
+            plan,
+            cacheService,
+            publicationService,
+            gate.GetCacheSafetySnapshot());
+        if (fallback is null)
+            return false;
+
+        var response = context.Response;
+        var statusCode = response.StatusCode;
+        var cacheControl = response.Headers.CacheControl;
+        var retryAfter = response.Headers.RetryAfter;
+        var contentType = response.ContentType;
+        response.StatusCode = StatusCodes.Status200OK;
+        response.Headers.Remove("Retry-After");
+        response.Headers.ContentLength = null;
+        if (await TryServeHitAsync(
+                context,
+                metaDb,
+                gate,
+                telemetry,
+                plan,
+                fallback.Value,
+                publicationService,
+                cacheHeaderValue: "fallback"))
+        {
+            return true;
+        }
+
+        response.StatusCode = statusCode;
+        response.Headers.CacheControl = cacheControl;
+        response.Headers.RetryAfter = retryAfter;
+        response.ContentType = contentType;
+        return false;
     }
 
     private async Task ExecuteSingleFlightBuildAsync(
@@ -377,36 +444,68 @@ public sealed class PublicApiResponseCacheMiddleware
 
         var retrySafety =
             gate.GetCacheSafetySnapshot();
-        var existing = TryGetServiceHit(
-            context,
-            plan,
-            cacheService,
-            publicationService,
-            retrySafety);
-        if (existing is not null)
+        if (plan.UnavailableFallback)
         {
-            if (await TryServeHitAsync(
-                    context,
-                    metaDb,
-                    gate,
-                    telemetry,
-                    plan,
-                    existing.Value,
-                    publicationService))
+            // Fallback rows are read only while the live read is frozen or
+            // unavailable; open reads always rebuild from the endpoint.
+            if (retrySafety.IsFrozen)
             {
+                var frozenHit = TryGetServiceHit(
+                    context,
+                    plan,
+                    cacheService,
+                    publicationService,
+                    retrySafety);
+                if (frozenHit is not null
+                    && await TryServeHitAsync(
+                        context,
+                        metaDb,
+                        gate,
+                        telemetry,
+                        plan,
+                        frozenHit.Value,
+                        publicationService))
+                {
+                    return;
+                }
+
+                await _next(context);
                 return;
             }
         }
-
-        if (gate.IsFrozen)
+        else
         {
-            await BlockFrozenMissIfRequiredAsync(
+            var existing = TryGetServiceHit(
                 context,
-                gate,
-                telemetry,
-                publicationBound: true,
-                plan);
-            return;
+                plan,
+                cacheService,
+                publicationService,
+                retrySafety);
+            if (existing is not null)
+            {
+                if (await TryServeHitAsync(
+                        context,
+                        metaDb,
+                        gate,
+                        telemetry,
+                        plan,
+                        existing.Value,
+                        publicationService))
+                {
+                    return;
+                }
+            }
+
+            if (gate.IsFrozen)
+            {
+                await BlockFrozenMissIfRequiredAsync(
+                    context,
+                    gate,
+                    telemetry,
+                    publicationBound: true,
+                    plan);
+                return;
+            }
         }
 
         var originalBody = context.Response.Body;
@@ -459,6 +558,21 @@ public sealed class PublicApiResponseCacheMiddleware
         var contentType =
             context.Response.ContentType
             ?? string.Empty;
+        if (plan.UnavailableFallback
+            && context.Response.StatusCode
+                == StatusCodes.Status503ServiceUnavailable
+            && await TryServeUnavailableFallbackAsync(
+                context,
+                metaDb,
+                gate,
+                telemetry,
+                cacheService,
+                plan,
+                publicationService))
+        {
+            return;
+        }
+
         if (context.Response.StatusCode
                 != StatusCodes.Status200OK
             || !contentType.StartsWith(
@@ -508,6 +622,11 @@ public sealed class PublicApiResponseCacheMiddleware
         var canonicalStored =
             cacheService.TryGetCurrent(plan);
         if (canonicalStored is not null
+            && (!plan.UnavailableFallback
+                || PublicationApiResponseCacheService
+                    .WrittenForPublication(
+                        canonicalStored.Value.PublishedAtUtc,
+                        canonicalStored.Value.CachedAtUtc))
             && canonicalStored.Value.Json
                 .AsSpan()
                 .SequenceEqual(json)
@@ -533,7 +652,9 @@ public sealed class PublicApiResponseCacheMiddleware
             publicationId,
             plan.RequestCacheKey,
             json,
-            etag);
+            etag,
+            requireWrittenForPublication:
+                plan.UnavailableFallback);
         if (stored is null)
         {
             telemetry.RecordOperation(

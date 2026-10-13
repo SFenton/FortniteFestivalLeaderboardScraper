@@ -933,6 +933,361 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
             trace.RoutePattern);
     }
 
+    private const string BandTeam =
+        "0123456789abcdef0123456789abcdef:"
+        + "fedcba9876543210fedcba9876543210";
+
+    private const string BandSongsTarget =
+        "/api/rankings/bands/Band_Duets/"
+        + BandTeam
+        + "/songs?limit=5";
+
+    private const string BandSongsPattern =
+        "/api/rankings/bands/{bandType}/{teamKey}/songs";
+
+    private const string LastPublishedBandSongs =
+        "{\"bandType\":\"Band_Duets\",\"limit\":5,"
+        + "\"best\":[{\"songId\":\"best-song\"}],"
+        + "\"worst\":[{\"songId\":\"worst-song\"}]}";
+
+    private static RequestDelegate UnpromotedBandProjection(
+        Action? onCalled = null) =>
+        async context =>
+        {
+            onCalled?.Invoke();
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["Retry-After"] = "30";
+            await Results.Problem(
+                    title: "Published band song data unavailable",
+                    statusCode:
+                        StatusCodes.Status503ServiceUnavailable)
+                .ExecuteAsync(context);
+        };
+
+    [Theory]
+    [InlineData("scrape")]
+    [InlineData("post-process")]
+    [InlineData("publish")]
+    public async Task Frozen_band_songs_without_selected_profile_serve_last_published_best_and_worst(
+        string freezeReason)
+    {
+        var fixture = Fixture(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                freezeReason));
+        var json = Encoding.UTF8.GetBytes(LastPublishedBandSongs);
+        fixture.MetaDb.GetCurrentCacheLookup(
+                PublicApiResponseCachePolicy
+                    .BuildCacheKeyForRequestTarget(
+                        BandSongsTarget))
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(json)));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            UnpromotedBandProjection(() => nextCalled = true),
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.False(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status200OK,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "hit",
+            context.Response.Headers[
+                "X-FST-Public-Cache"]);
+        Assert.Equal(
+            LastPublishedBandSongs,
+            await Body(context));
+        fixture.MetaDb.DidNotReceive()
+            .TrySetCurrentCachedResponse(
+                Arg.Any<long>(),
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Unpromoted_band_projection_serves_last_published_best_and_worst()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var json = Encoding.UTF8.GetBytes(LastPublishedBandSongs);
+        fixture.MetaDb.GetCurrentCacheLookup(
+                PublicApiResponseCachePolicy
+                    .BuildCacheKeyForRequestTarget(
+                        BandSongsTarget))
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(json)));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            UnpromotedBandProjection(() => nextCalled = true),
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+        context.Response.Headers[
+            "Access-Control-Allow-Origin"] = "*";
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.True(nextCalled);
+        Assert.Equal(
+            StatusCodes.Status200OK,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "fallback",
+            context.Response.Headers[
+                "X-FST-Public-Cache"]);
+        Assert.Equal(
+            "public, max-age=300",
+            context.Response.Headers.CacheControl);
+        Assert.False(
+            context.Response.Headers.ContainsKey(
+                "Retry-After"));
+        Assert.Equal(
+            "*",
+            context.Response.Headers[
+                "Access-Control-Allow-Origin"]);
+        Assert.StartsWith(
+            "application/json",
+            context.Response.ContentType);
+        Assert.Equal(
+            ResponseCacheService.ComputeETag(json),
+            context.Response.Headers.ETag);
+        Assert.Equal(
+            LastPublishedBandSongs,
+            await Body(context));
+        fixture.MetaDb.DidNotReceive()
+            .TrySetCurrentCachedResponse(
+                Arg.Any<long>(),
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Unpromoted_band_projection_without_published_response_stays_unavailable()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            UnpromotedBandProjection(),
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(
+            "no-store",
+            context.Response.Headers.CacheControl);
+        Assert.Equal(
+            "30",
+            context.Response.Headers["Retry-After"]);
+        Assert.Contains(
+            "Published band song data unavailable",
+            await Body(context));
+    }
+
+    [Fact]
+    public async Task Frozen_band_songs_miss_reads_endpoint_without_write()
+    {
+        var fixture = Fixture(
+            new PublicReadFreezeState(
+                true,
+                DateTime.UtcNow,
+                1302,
+                "post-process"));
+        var middleware = new PublicApiResponseCacheMiddleware(
+            UnpromotedBandProjection(),
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Contains(
+            "Published band song data unavailable",
+            await Body(context));
+        fixture.MetaDb.DidNotReceive()
+            .TrySetCurrentCachedResponse(
+                Arg.Any<long>(),
+                Arg.Any<string>(),
+                Arg.Any<byte[]>(),
+                Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Open_band_songs_read_is_live_and_refreshes_last_good_response()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var key = PublicApiResponseCachePolicy
+            .BuildCacheKeyForRequestTarget(
+                BandSongsTarget);
+        var stale = Encoding.UTF8.GetBytes(
+            "{\"best\":[],\"worst\":[]}");
+        var live = Encoding.UTF8.GetBytes(LastPublishedBandSongs);
+        fixture.MetaDb.GetCurrentCacheLookup(key)
+            .Returns(new PublicationCacheLookup(
+                true,
+                Cached(stale)));
+        fixture.MetaDb.TrySetCurrentCachedResponse(
+                42,
+                key,
+                Arg.Any<byte[]>(),
+                Arg.Any<string>())
+            .Returns(Cached(live));
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                context.Response.StatusCode =
+                    StatusCodes.Status200OK;
+                context.Response.ContentType =
+                    "application/json; charset=utf-8";
+                await context.Response.Body.WriteAsync(live);
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var context = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+
+        await middleware.InvokeAsync(
+            context,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            LastPublishedBandSongs,
+            await Body(context));
+        Assert.Equal(
+            "build",
+            context.Response.Headers[
+                "X-FST-Public-Cache"]);
+        fixture.MetaDb.Received(1)
+            .TrySetCurrentCachedResponse(
+                42,
+                key,
+                Arg.Is<byte[]>(bytes =>
+                    bytes.SequenceEqual(live)),
+                ResponseCacheService.ComputeETag(live));
+    }
+
+    [Fact]
+    public async Task Inherited_band_row_is_never_served_and_is_rewritten_for_current_publication()
+    {
+        var fixture = Fixture(
+            PublicReadFreezeState.NotFrozen);
+        var key = PublicApiResponseCachePolicy
+            .BuildCacheKeyForRequestTarget(
+                BandSongsTarget);
+        var json = Encoding.UTF8.GetBytes(LastPublishedBandSongs);
+        var publishedAt = DateTime.UtcNow;
+        var inherited = Cached(json) with
+        {
+            PublishedAtUtc = publishedAt,
+            CachedAtUtc = publishedAt.AddHours(-4),
+        };
+        fixture.MetaDb.GetCurrentCacheLookup(key)
+            .Returns(new PublicationCacheLookup(
+                true,
+                inherited));
+        var unavailable = new PublicApiResponseCacheMiddleware(
+            UnpromotedBandProjection(),
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var unavailableContext = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+
+        await unavailable.InvokeAsync(
+            unavailableContext,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            StatusCodes.Status503ServiceUnavailable,
+            unavailableContext.Response.StatusCode);
+
+        var live = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                context.Response.StatusCode =
+                    StatusCodes.Status200OK;
+                context.Response.ContentType =
+                    "application/json";
+                await context.Response.Body.WriteAsync(json);
+            },
+            NullLogger<
+                PublicApiResponseCacheMiddleware>.Instance);
+        var liveContext = Context(
+            BandSongsTarget,
+            BandSongsPattern);
+
+        await live.InvokeAsync(
+            liveContext,
+            fixture.MetaDb,
+            fixture.Gate,
+            fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(
+            LastPublishedBandSongs,
+            await Body(liveContext));
+        fixture.MetaDb.Received(1)
+            .TrySetCurrentCachedResponse(
+                42,
+                key,
+                Arg.Any<byte[]>(),
+                ResponseCacheService.ComputeETag(json));
+    }
+
     private static CacheFixture Fixture(
         PublicReadFreezeState state)
     {

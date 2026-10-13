@@ -261,6 +261,9 @@ The freeze-safe public API cache has two tiers:
   revision, and normalized request identity.
 - L2 is `publication_api_response_cache`, authoritative for covered frozen
   reads and retained for the current and previous publications.
+- Band team reads keep a last-good L2 row that is served only while the read is
+  frozen or the endpoint returns `503`. Open reads stay live. See the
+  [API contract](../reference/api-contract.md) for the exact rules.
 
 Cache admission first requires exactly one authoritative `PublicationBound`
 endpoint classification from the canonical route catalog. Unclassified,

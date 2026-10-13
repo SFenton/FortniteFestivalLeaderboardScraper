@@ -26,7 +26,8 @@ public sealed record PublicApiCacheRequestPlan(
     TimeSpan MaxBuildDuration,
     int MaxPayloadBytes,
     string? ResponseCacheControl = null,
-    bool SongsRoute = false);
+    bool SongsRoute = false,
+    bool UnavailableFallback = false);
 
 public static class PublicationApiCacheKeys
 {
@@ -103,6 +104,8 @@ internal static class PublicApiResponseCachePolicy
             };
         var freezeCritical = false;
         var allowWriteThrough = false;
+        var unavailableFallback = false;
+        var maxBuildDuration = TimeSpan.FromSeconds(1);
         string? responseCacheControl = null;
         string? normalizedRequestCacheKey = null;
         var path = request.Path.Value!;
@@ -121,6 +124,18 @@ internal static class PublicApiResponseCachePolicy
             allowWriteThrough = true;
             responseCacheControl =
                 "public, max-age=1800, stale-while-revalidate=3600";
+        }
+        else if (IsBandTeamFallbackRequest(
+                     request,
+                     segments))
+        {
+            // Band team reads stay live while public reads are open; the
+            // stored row is only the last good response for this
+            // publication, served while the read is frozen or unavailable.
+            allowWriteThrough = true;
+            unavailableFallback = true;
+            maxBuildDuration = TimeSpan.FromSeconds(5);
+            responseCacheControl = "public, max-age=300";
         }
         else if (TryPlanRankings(
                      request,
@@ -182,11 +197,112 @@ internal static class PublicApiResponseCachePolicy
                 .ToArray(),
             freezeCritical,
             allowWriteThrough,
-            TimeSpan.FromSeconds(1),
+            maxBuildDuration,
             2 * 1024 * 1024,
             responseCacheControl,
-            songsRoute);
+            songsRoute,
+            unavailableFallback);
         return true;
+    }
+
+    /// <summary>
+    /// Band team reads (<c>/api/rankings/bands/{bandType}/{teamKey}</c> and
+    /// its <c>/songs</c>, <c>/song-rows</c> and <c>/history</c> children)
+    /// whose last good response is kept for the current publication. The
+    /// team key must be a well-formed account-id list of the band's size so
+    /// arbitrary paths cannot create cache rows.
+    /// </summary>
+    internal static bool IsBandTeamFallbackRequest(
+        HttpRequest request,
+        string[] segments)
+    {
+        if (!IsBandTeamPath(segments))
+            return false;
+
+        if (!TryGetCanonicalBandType(
+                segments[3],
+                out var bandType)
+            || !IsWellFormedTeamKey(
+                bandType,
+                segments[4]))
+        {
+            return false;
+        }
+
+        if (segments.Length == 5)
+        {
+            return OnlyQueryKeys(request, "combo", "rankBy")
+                   && (QueryValue(request, "rankBy") is not { } rankBy
+                       || RankingMetrics.Contains(rankBy));
+        }
+
+        if (string.Equals(
+                segments[5],
+                "songs",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return OnlyQueryKeys(request, "combo", "limit")
+                   && TryQueryInt(request, "limit", 5, out var limit)
+                   && limit is >= 1 and <= 20;
+        }
+
+        if (string.Equals(
+                segments[5],
+                "history",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return OnlyQueryKeys(request, "combo", "days")
+                   && TryQueryInt(request, "days", 30, out var days)
+                   && days is >= 1 and <= 3650;
+        }
+
+        return OnlyQueryKeys(request, "combo");
+    }
+
+    private static bool IsBandTeamPath(
+        string[] segments)
+    {
+        if (segments.Length is not (5 or 6)
+            || !string.Equals(
+                segments[0],
+                "api",
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                segments[1],
+                "rankings",
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                segments[2],
+                "bands",
+                StringComparison.OrdinalIgnoreCase)
+            || !BandComboIds.IsValidBandType(segments[3]))
+        {
+            return false;
+        }
+
+        if (segments.Length == 5)
+        {
+            return !string.Equals(
+                segments[4],
+                "combos",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        return segments[5].ToLowerInvariant()
+            is "songs" or "song-rows" or "history";
+    }
+
+    private static bool IsWellFormedTeamKey(
+        string bandType,
+        string teamKey)
+    {
+        var members = teamKey.Split(':');
+        return members.Length
+               == BandInstrumentMapping.ExpectedMemberCount(
+                   bandType)
+               && members.All(static member =>
+                   member.Length == 32
+                   && member.All(char.IsAsciiHexDigit));
     }
 
     internal static bool IsAuthoritativePublicationBound(
@@ -747,7 +863,8 @@ internal static class PublicApiResponseCachePolicy
                     "bands",
                     StringComparison.OrdinalIgnoreCase)
                 && BandComboIds.IsValidBandType(
-                    segments[3]);
+                    segments[3])
+                || IsBandTeamPath(segments);
         }
 
         return string.Equals(

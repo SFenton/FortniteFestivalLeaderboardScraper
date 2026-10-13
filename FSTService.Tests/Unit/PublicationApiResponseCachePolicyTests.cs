@@ -253,6 +253,88 @@ public sealed class PublicationApiResponseCachePolicyTests
                 selected.Request));
     }
 
+    private const string DuetTeam =
+        "0123456789abcdef0123456789abcdef:"
+        + "fedcba9876543210fedcba9876543210";
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/songs?limit=5")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/songs?combo=Solo_Guitar%2BSolo_Bass")]
+    [InlineData("/api/rankings/bands/band_duets/" + DuetTeam + "/song-rows")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/history?days=30")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "?rankBy=weighted")]
+    public void Band_team_reads_keep_last_good_response_without_freeze_critical_reads(
+        string target)
+    {
+        var context = Context(target);
+
+        Assert.True(
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                context,
+                out var plan));
+        Assert.True(plan.UnavailableFallback);
+        Assert.True(plan.AllowWriteThrough);
+        Assert.False(plan.FreezeCritical);
+        Assert.Equal("public, max-age=300", plan.ResponseCacheControl);
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/combos")]
+    [InlineData("/api/rankings/bands/Band_Duets/not-a-team/songs")]
+    [InlineData("/api/rankings/bands/Band_Trios/" + DuetTeam + "/songs")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/songs?limit=21")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/songs?limit=5&extra=1")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/history?days=0")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "?rankBy=unknown")]
+    [InlineData("/api/rankings/bands/Band_Unknown/" + DuetTeam + "/songs")]
+    public void Unbounded_or_malformed_band_team_reads_never_write_through(
+        string target)
+    {
+        var context = Context(target);
+
+        var cacheable =
+            PublicApiResponseCachePolicy.TryCreateRequestPlan(
+                context,
+                out var plan);
+        Assert.True(
+            !cacheable
+            || !plan.UnavailableFallback
+               && !plan.AllowWriteThrough);
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/songs?limit=5")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/song-rows")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam + "/history")]
+    [InlineData("/api/rankings/bands/Band_Duets/" + DuetTeam)]
+    public void Band_team_keys_ignore_selected_profile_headers(
+        string target)
+    {
+        var native = Context(target);
+        var web = Context(target);
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedProfileTypeHeader] = "band";
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedBandTypeHeader] = "Band_Duets";
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .SelectedBandTeamKeyHeader] = DuetTeam;
+        web.Request.Headers[
+            SelectedProfileHeaders
+                .LegacySelectedPlayerHeader] = "account-secret";
+
+        var nativeKey =
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                native.Request);
+        Assert.Equal(
+            nativeKey,
+            PublicApiResponseCachePolicy.BuildCacheKey(
+                web.Request));
+        Assert.DoesNotContain("account-secret", nativeKey);
+    }
+
     private static DefaultHttpContext Context(
         string target,
         object[]? endpointMetadata = null)

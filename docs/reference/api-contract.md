@@ -309,6 +309,25 @@ Aggregate player scopes intentionally use different formulas:
   equivalent integer spellings normalize to one semantic key. Responses at or above one
   second, over 2 MiB, non-200, non-JSON, failed, or raced by a freeze are served
   if otherwise valid but are not cached.
+- Band team reads (`GET /api/rankings/bands/{bandType}/{teamKey}` and its
+  `/songs`, `/song-rows`, and `/history` children) keep a last-good response
+  per publication. Their keys ignore selected-profile headers, so native
+  clients without those headers share entries with the web. They are cached
+  only when the team key holds the band type's member count of 32-hex account
+  IDs and the query is bounded (`combo`, `rankBy` metric, `limit` 1-20,
+  `days` 1-3650). While reads are open, the endpoint always runs. A changed
+  `200` is written through under the same size, duration (5 s), freeze, and
+  publication-race guards. If the endpoint returns `503` (for example, the band
+  song projection is advanced but not yet promoted during post-processing),
+  the stored current-publication response is served with
+  `X-FST-Public-Cache: fallback` and `Cache-Control: public, max-age=300`.
+  While reads are frozen, an existing row is served as a `hit`. A miss still
+  reaches the endpoint, which keeps its live or `503` behavior. A team with no
+  stored response for the current publication keeps the distinct `503` with
+  `Retry-After: 30`. The cache never writes while frozen. Only rows written
+  after the current publication was published (`cached_at >= published_at`)
+  are served. Rows inherited into a publication without staged precompute are
+  ignored and rewritten on the next open read.
 - During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
   covered publication-bound route may serve only an existing L1/L2 published
   cache hit; the cache never builds or writes while frozen.
