@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-29
-last_verified_commit: 1efdf69d
+last_verified: 2026-10-12
+last_verified_commit: 0a953da1
 sources:
   - FSTService/Program.cs
   - FSTService/StartupPublicationReadOnlyState.cs
@@ -296,15 +296,34 @@ registered-player default profiles, top-10 song/instrument leaderboards, and
 existing leaderboard-all/song-band bootstrap rows. Request aliases resolve
 canonical precompute keys and project contained page windows without duplicating
 large JSON rows. Selected account/team overlays, arbitrary pages/filters,
-search/history/notification variants, paths, shop, operational, private, and
+search/notification variants, paths, shop, operational, private, and
 WebSocket routes keep their established owners.
+
+Scoped ranking cards save last-successful current-publication snapshots through
+the same bounded write path: band profiles/history/best-worst songs/song rows,
+player instrument/family/combo/composite rankings, instrument history, and
+instrument/composite neighborhoods. Their successful unfrozen reads refresh
+the snapshot rather than serving it indefinitely, preserving same-publication
+history freshness. Frozen and failed-candidate reads recover exact L2 bytes
+after a process restart without querying candidate projections. Selected-profile
+activity headers do not alter these payloads or fragment their keys; explicit
+defaults and equivalent integer/combo selectors normalize together. Only the
+documented finite filter ranges are admitted, with the existing one-second and
+2-MiB per-response limits. These are on-demand snapshots, not eager precompute
+for every account/team: an unwarmed frozen card still fails explicitly.
+Unfrozen projection errors are not concealed by an older snapshot.
+Default-radius neighborhoods retain their existing eager registered-player
+aliases, so a first frozen read can use precompute without warming a route
+snapshot. Other radii cannot reuse the default-radius response.
 
 During any required-cache freeze, covered routes perform L1/L2 reads only. A
 hit returns `200`/`304`; a miss returns `503` with `Retry-After: 30` and never
 builds or writes. Cache hits retain each covered endpoint family's
 `Cache-Control`, content type, ETag, publication header, and exact response
-bytes. Unfrozen overview sizes `25` and `50` are the only lazy
-write-through variants. They use process single-flight, store only successful
+bytes. Unfrozen overview sizes `25` and `50` and the scoped card snapshots use
+the bounded write-through path. Only the finite overview variants use process
+single-flight; fresh scoped reads do not retain per-subject build gates or
+serialize independent requests. Both store only successful
 JSON responses whose measured build is below one second, and reject slow,
 oversized, failed, or transition-raced builds without poisoning L2.
 Every post-wait lookup passes the authoritative publication/source readiness

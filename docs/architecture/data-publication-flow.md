@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: worker
-last_verified: 2026-09-14
-last_verified_commit: d15cbdf7
+last_verified: 2026-10-12
+last_verified_commit: 0a953da1
 sources:
   - FSTService/ScraperWorker.cs
   - FSTService/SnapshotGenerationRetentionSafePointQueue.cs
@@ -139,6 +139,12 @@ read-serving health does not admit the next scrape or imply source readiness.
 4. **Freeze public reads**
    - Persist the public-read freeze and freeze response-cache expiry.
    - Existing published cache hits remain usable; candidate state is not public.
+   - Scoped band/player ranking cards can also use their last successful
+     unfrozen current-publication snapshot. Selection headers and omitted
+     defaults do not split native and web identities. These on-demand snapshots
+     never build/write while frozen or fall back to another publication; a
+     cold miss remains unavailable. Normal reads refresh snapshots so
+     same-publication history work remains visible.
 5. **Network and writer phases**
    - `ScrapeOrchestrator` performs enabled solo/band work and persists candidate
      results through disk-spool or bounded online writers.

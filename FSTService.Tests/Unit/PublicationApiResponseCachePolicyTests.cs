@@ -253,6 +253,155 @@ public sealed class PublicationApiResponseCachePolicyTests
                 selected.Request));
     }
 
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=5")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/song-rows")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/history?days=30")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b?rankBy=adjusted")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/history?days=30")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/neighborhood?radius=5")]
+    [InlineData("/api/rankings/composite/account-1")]
+    [InlineData("/api/rankings/composite/account-1/neighborhood?radius=5")]
+    [InlineData("/api/rankings/family/pad/account-1")]
+    [InlineData("/api/rankings/combo/account-1?instruments=Solo_Guitar%2BSolo_Bass")]
+    public void Profile_ranking_cards_share_bounded_publication_plans(
+        string target)
+    {
+        var native = Context(target);
+        var web = Context(target);
+        web.Request.Headers[SelectedProfileHeaders.SelectedProfileTypeHeader] = "band";
+        web.Request.Headers[SelectedProfileHeaders.SelectedProfileIdHeader] = "unrelated-band";
+        web.Request.Headers[SelectedProfileHeaders.LegacySelectedPlayerHeader] = "unrelated-player";
+        web.Request.Headers[SelectedProfileHeaders.SelectedBandIdHeader] = "unrelated-band";
+        web.Request.Headers[SelectedProfileHeaders.SelectedBandTypeHeader] = "Band_Trios";
+        web.Request.Headers[SelectedProfileHeaders.SelectedBandTeamKeyHeader] = "x:y:z";
+
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(native, out var nativePlan));
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(web, out var webPlan));
+        Assert.False(nativePlan.FreezeCritical);
+        Assert.True(nativePlan.AllowWriteThrough);
+        Assert.Equal(TimeSpan.FromSeconds(1), nativePlan.MaxBuildDuration);
+        Assert.Equal(2 * 1024 * 1024, nativePlan.MaxPayloadBytes);
+        Assert.Equal(nativePlan.RequestCacheKey, webPlan.RequestCacheKey);
+        Assert.Equal(
+            PublicApiResponseCachePolicy.BuildCacheKey(native.Request),
+            PublicApiResponseCachePolicy.BuildCacheKey(web.Request));
+        Assert.Contains(nativePlan.LookupCandidates, candidate =>
+            candidate.CacheKey == nativePlan.RequestCacheKey);
+        Assert.Equal(
+            target.Contains("/neighborhood", StringComparison.Ordinal)
+                ? "public, max-age=300, stale-while-revalidate=600"
+                : "public, max-age=300",
+            nativePlan.ResponseCacheControl);
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs", "?limit=05")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/history", "?days=030")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b", "?rankBy=adjusted")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1", "?rankBy=adjusted")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/history", "?days=030")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/neighborhood", "?radius=05")]
+    public void Profile_card_defaults_and_numeric_spellings_share_one_key(
+        string path,
+        string explicitDefaults)
+    {
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(path), out var defaultPlan));
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(path + explicitDefaults + "&publicationId=42"), out var explicitPlan));
+
+        Assert.True(defaultPlan.AllowWriteThrough);
+        Assert.Equal(defaultPlan.RequestCacheKey, explicitPlan.RequestCacheKey);
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=0")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=21")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=invalid")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=5&limit=10")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?combo=invalid")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/history?days=3651")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/notifications")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?accountId=x")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/neighborhood?radius=26")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1?unknown=1")]
+    [InlineData("/api/rankings/invalid/account-1")]
+    [InlineData("/api/rankings/family/invalid/account-1")]
+    [InlineData("/api/rankings/combo/account-1?instruments=invalid")]
+    public void Invalid_or_unbounded_profile_variants_do_not_build(
+        string target)
+    {
+        var cacheable = PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(target), out var plan);
+
+        Assert.True(!cacheable || !plan.FreezeCritical && !plan.AllowWriteThrough);
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=5",
+        "/api/rankings/bands/Band_Duets/c:d/songs?limit=5")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=5",
+        "/api/rankings/bands/Band_Duets/a:b/songs?limit=10")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=5",
+        "/api/rankings/bands/Band_Duets/a:b/songs?limit=5&combo=Solo_Guitar%2BSolo_Bass")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1",
+        "/api/rankings/Solo_Guitar/account-2")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1",
+        "/api/rankings/Solo_Bass/account-1")]
+    public void Profile_card_identity_and_filters_remain_isolated(
+        string first,
+        string second)
+    {
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(first), out var firstPlan));
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(second), out var secondPlan));
+
+        Assert.NotEqual(firstPlan.RequestCacheKey, secondPlan.RequestCacheKey);
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/neighborhood",
+        "neighborhood:Solo_Guitar:account-1:5")]
+    [InlineData("/api/rankings/composite/account-1/neighborhood?radius=05",
+        "neighborhood:composite:account-1:5")]
+    public void Default_neighborhood_cards_reuse_eager_published_rows(
+        string target,
+        string canonicalKey)
+    {
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(target), out var plan));
+
+        Assert.Contains(plan.LookupCandidates, candidate => candidate.CacheKey == canonicalKey);
+    }
+
+    [Fact]
+    public void Nondefault_neighborhood_does_not_alias_default_radius()
+    {
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context("/api/rankings/Solo_Guitar/account-1/neighborhood?radius=10"), out var plan));
+
+        Assert.DoesNotContain(plan.LookupCandidates, candidate =>
+            candidate.CacheKey.StartsWith("neighborhood:", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/neighborhood")]
+    [InlineData("/api/rankings/Solo_Guitar/neighborhood")]
+    [InlineData("/api/rankings/composite/neighborhood")]
+    public void Subject_named_neighborhood_is_not_a_neighborhood_route(string target)
+    {
+        Assert.True(PublicApiResponseCachePolicy.TryCreateRequestPlan(
+            Context(target), out var plan));
+
+        Assert.True(plan.AllowWriteThrough);
+        Assert.Equal("public, max-age=300", plan.ResponseCacheControl);
+        Assert.DoesNotContain(plan.LookupCandidates, candidate =>
+            candidate.CacheKey.StartsWith("neighborhood:", StringComparison.Ordinal));
+    }
+
     private static DefaultHttpContext Context(
         string target,
         object[]? endpointMetadata = null)

@@ -9235,6 +9235,149 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Rankings_BandCards_NativeReadsKeepPublishedSongsDuringScrape()
+    {
+        using var factory = new FstWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var metaDb = factory.Services.GetRequiredService<MetaDatabase>();
+        var pointers = EnsureCurrentPublication(metaDb);
+        var dataSource = factory.Services.GetRequiredService<NpgsqlDataSource>();
+        var builder = factory.Services.GetRequiredService<BandCurrentProjectionBuilder>();
+        await builder.EnsureSchemaAsync();
+        const string bandType = "Band_Duets";
+        const string teamKey = "nativeA:nativeB";
+        const string firstSong = "native_band_worst";
+        const string secondSong = "native_band_best";
+        var persistence = new BandLeaderboardPersistence(
+            dataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries(firstSong, bandType,
+        [
+            CreateBandEntry(teamKey, "0:1", 900),
+            CreateBandEntry("otherA:otherB", "0:1", 1000),
+        ]);
+        persistence.UpsertBandEntries(secondSong, bandType,
+        [
+            CreateBandEntry(teamKey, "0:1", 1200),
+            CreateBandEntry("otherA:otherB", "0:1", 800),
+        ]);
+        var scopes = new List<BandCurrentProjectionScopeKey>
+        {
+            new BandCurrentProjectionScopeKey(firstSong, bandType, "overall", string.Empty),
+            new BandCurrentProjectionScopeKey(secondSong, bandType, "overall", string.Empty),
+        };
+        for (var index = 0; index < 4; index++)
+        {
+            var songId = $"native_band_extra_{index}";
+            persistence.UpsertBandEntries(songId, bandType,
+            [
+                CreateBandEntry(teamKey, "0:1", 1000),
+                CreateBandEntry("otherA:otherB", "0:1", 1100),
+            ]);
+            scopes.Add(new BandCurrentProjectionScopeKey(songId, bandType, "overall", string.Empty));
+        }
+        var result = await builder.RefreshScopesAsync(
+            scopes,
+            new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = false });
+        Assert.True(result.PublishResult.Published);
+        var generation = Assert.Single(result.Scopes.Select(scope => scope.Generation).Distinct());
+        using (var connection = dataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE scrape_publication_state
+                SET band_projection_generation = @generation
+                WHERE id = TRUE
+                """;
+            command.Parameters.AddWithValue("generation", generation);
+            command.ExecuteNonQuery();
+        }
+
+        var route = $"/api/rankings/bands/{bandType}/{Uri.EscapeDataString(teamKey)}";
+        var baseline = new Dictionary<string, (byte[] Body, string ETag)>();
+        foreach (var suffix in new[] { "/songs?limit=5", "/song-rows" })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, route + suffix);
+            request.Headers.Add(SelectedProfileHeaders.SelectedProfileTypeHeader, "band");
+            request.Headers.Add(SelectedProfileHeaders.SelectedProfileIdHeader, "unrelated-band");
+            request.Headers.Add(SelectedProfileHeaders.SelectedBandTypeHeader, "Band_Trios");
+            request.Headers.Add(SelectedProfileHeaders.SelectedBandTeamKeyHeader, "x:y:z");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("build", Assert.Single(response.Headers.GetValues("X-FST-Public-Cache")));
+            baseline[suffix] = (
+                await response.Content.ReadAsByteArrayAsync(),
+                response.Headers.ETag!.ToString());
+        }
+        using (var json = JsonDocument.Parse(baseline["/songs?limit=5"].Body))
+        {
+            Assert.Equal(secondSong, json.RootElement.GetProperty("best")[0].GetProperty("songId").GetString());
+            Assert.Equal(firstSong, json.RootElement.GetProperty("worst")[0].GetProperty("songId").GetString());
+        }
+
+        metaDb.SetPublicReadFreeze(true, pointers.PublishedScrapeId, "scrape");
+        // Simulate the candidate projection advancing before global promotion.
+        using (var connection = dataSource.OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE band_current_projection_state
+                SET current_generation = @generation
+                WHERE id = TRUE
+                """;
+            command.Parameters.AddWithValue("generation", generation + 1);
+            command.ExecuteNonQuery();
+        }
+        Assert.False(metaDb.IsBandCurrentProjectionGloballyPublished());
+        var gate = factory.Services.GetRequiredService<PublicReadGateService>();
+        var cache = factory.Services.GetRequiredService<PublicationApiResponseCacheService>();
+        gate.Invalidate();
+        cache.Reset();
+
+        foreach (var clientName in new[] { "iOS", "Android", "Windows" })
+        {
+            foreach (var (suffix, expected) in baseline)
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get, route + suffix.Replace("?limit=5", ""));
+                request.Headers.UserAgent.ParseAdd($"FST-{clientName}/1.0");
+                using var response = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Equal(expected.Body, await response.Content.ReadAsByteArrayAsync());
+                Assert.Equal(expected.ETag, response.Headers.ETag!.ToString());
+                Assert.Equal(
+                    pointers.CurrentPublicationId!.Value.ToString(),
+                    Assert.Single(response.Headers.GetValues("X-FST-Publication-Id")));
+                Assert.Equal("hit", Assert.Single(response.Headers.GetValues("X-FST-Public-Cache")));
+            }
+        }
+
+        using (var request = new HttpRequestMessage(HttpMethod.Get, route + "/songs"))
+        {
+            request.Headers.IfNoneMatch.ParseAdd(baseline["/songs?limit=5"].ETag);
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.NotModified, response.StatusCode);
+            Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+        }
+        using (var missing = await client.GetAsync(
+            $"/api/rankings/bands/{bandType}/never%3Apublished/songs"))
+        {
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, missing.StatusCode);
+            Assert.Equal("no-store", missing.Headers.CacheControl?.ToString());
+            Assert.Equal("30", Assert.Single(missing.Headers.GetValues("Retry-After")));
+            var json = await missing.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.True(json.TryGetProperty("title", out _));
+            Assert.False(json.TryGetProperty("best", out _));
+        }
+
+        ClearPublicReadFreezeForTest(dataSource);
+        gate.Invalidate();
+        using var unavailable = await client.GetAsync(route + "/songs");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        Assert.Equal("no-store", unavailable.Headers.CacheControl?.ToString());
+        Assert.Equal("30", Assert.Single(unavailable.Headers.GetValues("Retry-After")));
+    }
+
+    [Fact]
     public async Task Rankings_BandSongs_ReturnsUnavailableWhenPublishedProjectionIsMissing()
     {
         using var factory = _factory.WithWebHostBuilder(_ => { });

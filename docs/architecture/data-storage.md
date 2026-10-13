@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: data
-last_verified: 2026-09-29
-last_verified_commit: f65a3a4a
+last_verified: 2026-10-12
+last_verified_commit: 0a953da1
 sources:
   - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - tools/postgres-snapshot-archive-retire.py
@@ -292,13 +292,29 @@ Frozen or transition-raced writes return no row and cannot poison L1.
 An exact current byte/ETag match is returned without an upsert, so service
 restart recovery does not rewrite an already-current songs payload.
 
+Scoped band/player ranking cards use this existing write path to preserve their
+last successful unfrozen response for the current publication. They refresh on
+normal reads and use the durable snapshot only during a scrape/recovery freeze.
+Band best/worst songs, song rows, profile/history, player instrument/family/
+combo/composite rankings, instrument history, and instrument/composite
+neighborhoods share identities across web selection headers and headerless
+native clients. Known filters/defaults normalize, but different subjects and
+filters never share data. No schema/index or publication-source change is
+required. Snapshot storage scales with successfully requested subjects and
+admitted filter variants, bounded per response by one second and 2 MiB and
+retained under the existing current/previous-publication cleanup policy.
+Errors and transition-raced builds never replace a successful snapshot; no
+previous-publication or candidate-data fallback is introduced.
+Write-through rejects a downstream response context for a different
+publication rather than relabeling its bytes as current.
+
 The current production surface has 9,255 rows and about 245 MB of JSON for one
 publication. The candidate adds at most 6,319 eager rows (one songs row plus
 6,318 published song/instrument top-10 rows). A read-only stratified sample of
 180 standalone instrument payloads across 20 evenly spaced catalog songs
 measured a `1.09696` standalone-to-leaderboard-all byte ratio, yielding
 19.02 MB logical payload per publication. Keep 20.74 MB as the conservative
-upper bound until a full candidate precompute measures every row. The only lazy space is ten finite overview
+upper bound until a full candidate precompute measures every row. The historical lazy-space estimate covers ten finite overview
 metric/size variants, at most 1.59 MB from measured payloads. Current and
 previous generation rows plus the required current `api_response_cache`
 compatibility mirror therefore add about 57.06 MB logical payload centrally,
@@ -312,6 +328,11 @@ relations compress logical JSON materially; the current ratios imply roughly
 Incremental WAL, table overhead, and
 promotion-copy cost remain full-scrape A/B measurements rather than inferred
 acceptance evidence.
+
+Those overview estimates exclude on-demand scoped card snapshots. Their
+aggregate storage depends on actual successful readership and filter use;
+the per-response limit is not a fixed total storage budget or a measured
+performance claim.
 
 The rejected service-only A/B on publication 1302 measured the full current
 cache build directly. Head `5a227954` staged 15,574 rows and 267,948,123

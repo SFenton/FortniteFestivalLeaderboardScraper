@@ -933,6 +933,265 @@ public sealed class PublicationApiResponseCacheMiddlewareTests
             trace.RoutePattern);
     }
 
+    [Theory]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/songs?limit=5")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/song-rows")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b/history?days=30")]
+    [InlineData("/api/rankings/bands/Band_Duets/a:b?rankBy=adjusted")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/history?days=30")]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/neighborhood?radius=5")]
+    [InlineData("/api/rankings/composite/account-1")]
+    [InlineData("/api/rankings/composite/account-1/neighborhood?radius=5")]
+    [InlineData("/api/rankings/family/pad/account-1")]
+    [InlineData("/api/rankings/combo/account-1?instruments=Solo_Guitar%2BSolo_Bass")]
+    public async Task Profile_cards_refresh_unfrozen_then_share_last_snapshot_during_scrape(
+        string target)
+    {
+        var fixture = Fixture(PublicReadFreezeState.NotFrozen);
+        var web = ContextWithMetadata(
+            target, target.Split('?')[0],
+            PublicationBound.Instance,
+            EndpointHandlesFailedCandidateRead.Instance);
+        web.Request.Headers[SelectedProfileHeaders.SelectedProfileTypeHeader] = "band";
+        web.Request.Headers[SelectedProfileHeaders.SelectedProfileIdHeader] = "unrelated-band";
+        var key = Plan(web).RequestCacheKey;
+        PublicationCachedResponse? stored = null;
+        fixture.MetaDb.GetCurrentCacheLookup(Arg.Any<string>())
+            .Returns(call => new PublicationCacheLookup(
+                true, call.Arg<string>() == key ? stored : null));
+        fixture.MetaDb.TrySetCurrentCachedResponse(
+                42, key, Arg.Any<byte[]>(), Arg.Any<string>())
+            .Returns(call => stored = Cached(call.Arg<byte[]>()));
+        var builds = 0;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                builds++;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync($"{{\"revision\":{builds}}}");
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+
+        await middleware.InvokeAsync(
+            web, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+        var refresh = Context(target, target.Split('?')[0]);
+        await middleware.InvokeAsync(
+            refresh, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+        Assert.Equal(2, builds);
+        Assert.Equal("{\"revision\":2}", await Body(refresh));
+        Assert.NotNull(stored);
+
+        fixture.MetaDb.GetPublicReadFreezeState().Returns(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1303, "scrape"));
+        fixture.Gate.Invalidate();
+        fixture.Cache.Reset();
+        fixture.MetaDb.ClearReceivedCalls();
+        var native = ContextWithMetadata(
+            target, target.Split('?')[0],
+            PublicationBound.Instance,
+            EndpointHandlesFailedCandidateRead.Instance);
+        await middleware.InvokeAsync(
+            native, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(2, builds);
+        Assert.Equal(StatusCodes.Status200OK, native.Response.StatusCode);
+        Assert.Equal("{\"revision\":2}", await Body(native));
+        Assert.Equal(stored.ETag, native.Response.Headers.ETag);
+        Assert.Equal("42", native.Response.Headers["X-FST-Publication-Id"]);
+        Assert.Equal("l2", native.Response.Headers["X-FST-Public-Cache-Tier"]);
+        fixture.MetaDb.DidNotReceive().TrySetCurrentCachedResponse(
+            Arg.Any<long>(), Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Band_song_snapshot_remains_available_during_failed_candidate_isolation()
+    {
+        var fixture = Fixture(PublicReadFreezeState.NotFrozen);
+        fixture.MetaDb.GetFailedCandidateReadIsolationState().Returns(
+            new PublicReadFreezeState(
+                true, DateTime.UtcNow, 1303,
+                MetaDatabase.FailedCandidateReadIsolationReason));
+        const string target = "/api/rankings/bands/Band_Duets/a:b/songs?limit=5";
+        var native = ContextWithMetadata(
+            target, target.Split('?')[0],
+            PublicationBound.Instance,
+            EndpointHandlesFailedCandidateRead.Instance);
+        var json = Encoding.UTF8.GetBytes("""{"best":[{"songId":"best"}],"worst":[{"songId":"worst"}]}""");
+        fixture.MetaDb.GetCurrentCacheLookup(Plan(native).RequestCacheKey)
+            .Returns(new PublicationCacheLookup(true, Cached(json)));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+
+        await middleware.InvokeAsync(
+            native, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, native.Response.StatusCode);
+        Assert.Equal(Encoding.UTF8.GetString(json), await Body(native));
+    }
+
+    [Fact]
+    public async Task Unfrozen_band_projection_error_is_not_hidden_or_written_as_empty_data()
+    {
+        var fixture = Fixture(PublicReadFreezeState.NotFrozen);
+        const string target = "/api/rankings/bands/Band_Duets/a:b/songs?limit=5";
+        var context = Context(target, target.Split('?')[0]);
+        fixture.MetaDb.GetCurrentCacheLookup(Plan(context).RequestCacheKey)
+            .Returns(new PublicationCacheLookup(true,
+                Cached(Encoding.UTF8.GetBytes("""{"best":[1],"worst":[2]}"""))));
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async next =>
+            {
+                next.Response.Headers.CacheControl = "no-store";
+                next.Response.Headers["Retry-After"] = "30";
+                await Results.Problem(
+                    title: "Published band song data unavailable",
+                    statusCode: StatusCodes.Status503ServiceUnavailable)
+                    .ExecuteAsync(next);
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+
+        await middleware.InvokeAsync(
+            context, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        Assert.Equal("no-store", context.Response.Headers.CacheControl);
+        Assert.Equal("30", context.Response.Headers["Retry-After"]);
+        Assert.Contains("Published band song data unavailable", await Body(context));
+        fixture.MetaDb.DidNotReceive().TrySetCurrentCachedResponse(
+            Arg.Any<long>(), Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Profile_snapshot_build_raced_by_freeze_does_not_store_candidate_bytes()
+    {
+        var fixture = Fixture(PublicReadFreezeState.NotFrozen);
+        const string target = "/api/rankings/bands/Band_Duets/a:b/songs?limit=5";
+        var context = Context(target, target.Split('?')[0]);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async next =>
+            {
+                next.Response.ContentType = "application/json";
+                await next.Response.WriteAsync("""{"best":[1],"worst":[2]}""");
+                fixture.MetaDb.GetPublicReadFreezeState().Returns(
+                    new PublicReadFreezeState(true, DateTime.UtcNow, 1303, "scrape"));
+                fixture.Gate.Invalidate();
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+
+        await middleware.InvokeAsync(
+            context, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        fixture.MetaDb.DidNotReceive().TrySetCurrentCachedResponse(
+            Arg.Any<long>(), Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<string>());
+    }
+
+    [Theory]
+    [InlineData("/api/rankings/Solo_Guitar/account-1/neighborhood",
+        "neighborhood:Solo_Guitar:account-1:5")]
+    [InlineData("/api/rankings/composite/account-1/neighborhood?radius=5",
+        "neighborhood:composite:account-1:5")]
+    public async Task Cold_native_neighborhood_uses_published_precompute_during_scrape(
+        string target,
+        string canonicalKey)
+    {
+        var fixture = Fixture(
+            new PublicReadFreezeState(true, DateTime.UtcNow, 1303, "scrape"));
+        var json = Encoding.UTF8.GetBytes(
+            """{"rank":1,"above":[],"self":{"accountId":"account-1"},"below":[]}""");
+        fixture.MetaDb.GetCurrentCacheLookup(canonicalKey)
+            .Returns(new PublicationCacheLookup(true, Cached(json)));
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var native = Context(target, target.Split('?')[0]);
+
+        await middleware.InvokeAsync(
+            native, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, native.Response.StatusCode);
+        Assert.Equal(Encoding.UTF8.GetString(json), await Body(native));
+        fixture.MetaDb.DidNotReceive().TrySetCurrentCachedResponse(
+            Arg.Any<long>(), Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task Fresh_profile_snapshots_do_not_serialize_or_retain_subject_build_gates()
+    {
+        var fixture = Fixture(PublicReadFreezeState.NotFrozen);
+        const string target = "/api/rankings/bands/Band_Duets/a:b/songs?limit=5";
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var builds = 0;
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async context =>
+            {
+                if (Interlocked.Increment(ref builds) == 2)
+                    entered.SetResult();
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync("""{"best":[1],"worst":[2]}""");
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var first = Context(target, target.Split('?')[0]);
+        var second = Context(target, target.Split('?')[0]);
+
+        await Task.WhenAll(
+            middleware.InvokeAsync(
+                first, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+                cacheService: fixture.Cache),
+            middleware.InvokeAsync(
+                second, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+                cacheService: fixture.Cache));
+
+        Assert.Equal(2, builds);
+        Assert.Equal(await Body(first), await Body(second));
+    }
+
+    [Fact]
+    public async Task Previous_publication_profile_body_never_writes_the_current_snapshot()
+    {
+        var fixture = Fixture(PublicReadFreezeState.NotFrozen);
+        const string target = "/api/rankings/bands/Band_Duets/a:b/songs?limit=5&publicationId=41";
+        var context = Context(target, target.Split('?')[0]);
+        var middleware = new PublicApiResponseCacheMiddleware(
+            async next =>
+            {
+                next.SetPublicationReadContext(new PublicationReadContext(41, 1301, DateTime.UtcNow));
+                next.Response.ContentType = "application/json";
+                await next.Response.WriteAsync("""{"best":[1],"worst":[2]}""");
+            },
+            NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+
+        await middleware.InvokeAsync(
+            context, fixture.MetaDb, fixture.Gate, fixture.Telemetry,
+            cacheService: fixture.Cache);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("""{"best":[1],"worst":[2]}""", await Body(context));
+        fixture.MetaDb.DidNotReceive().TrySetCurrentCachedResponse(
+            Arg.Any<long>(), Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<string>());
+    }
+
     private static CacheFixture Fixture(
         PublicReadFreezeState state)
     {

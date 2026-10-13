@@ -134,6 +134,16 @@ internal static class PublicApiResponseCachePolicy
             responseCacheControl =
                 "public, max-age=1800, stale-while-revalidate=3600";
         }
+        else if (TryPlanProfileRankings(
+                     request,
+                     segments,
+                     candidates,
+                     out normalizedRequestCacheKey,
+                     out responseCacheControl))
+        {
+            candidates.Add(new(normalizedRequestCacheKey!));
+            allowWriteThrough = true;
+        }
         else if (TryPlanPlayer(
                      request,
                      segments,
@@ -251,6 +261,181 @@ internal static class PublicApiResponseCachePolicy
 
         cacheKey = BuildCacheKey(request);
         return true;
+    }
+
+    private static bool TryPlanProfileRankings(
+        HttpRequest request,
+        string[] segments,
+        List<PublicApiCacheLookupCandidate> candidates,
+        out string? normalizedCacheKey,
+        out string? responseCacheControl)
+    {
+        normalizedCacheKey = null;
+        responseCacheControl = null;
+        if (!TryGetProfileRankingQueryKeys(segments, out var keys)
+            || !OnlyQueryKeys(request, keys)
+            || request.Query.Any(pair =>
+                pair.Value.Count != 1
+                || string.IsNullOrWhiteSpace(pair.Value[0])))
+        {
+            return false;
+        }
+
+        var values = new Dictionary<string, string?>();
+        foreach (var key in keys)
+        {
+            switch (key)
+            {
+                case "rankBy":
+                    var metric = QueryValue(request, key) ?? "adjusted";
+                    if (!RankingMetrics.Contains(metric))
+                        return false;
+                    values[key] = metric;
+                    break;
+                case "limit":
+                case "days":
+                case "radius":
+                    var (fallback, maximum) = key switch
+                    {
+                        "limit" => (5, 20),
+                        "days" => (30, 3650),
+                        _ => (5, 25),
+                    };
+                    if (!TryQueryInt(request, key, fallback, out var number)
+                        || number < 1
+                        || number > maximum)
+                    {
+                        return false;
+                    }
+                    values[key] = number.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case "leeway":
+                    if (!TryQueryDouble(request, key, out var leeway)
+                        || leeway is not (null or 1.0))
+                    {
+                        return false;
+                    }
+                    if (leeway.HasValue)
+                        values[key] = "1";
+                    break;
+            }
+        }
+
+        if (segments[2] == "bands")
+        {
+            var combo = BandComboIds.TryNormalizeForBandType(
+                segments[3],
+                QueryValue(request, "combo"));
+            if (combo.Error is not null)
+                return false;
+            if (combo.ComboId is not null)
+                values["combo"] = combo.ComboId;
+        }
+        else if (segments[2] == "combo")
+        {
+            var combo = ComboIds.NormalizeComboParam(
+                QueryValue(request, "combo")
+                ?? QueryValue(request, "instruments"));
+            if (string.IsNullOrEmpty(combo)
+                || !ComboIds.IsWithinGroupCombo(combo))
+            {
+                return false;
+            }
+            values["combo"] = combo;
+        }
+
+        normalizedCacheKey = BuildCacheKeyForRequestTarget(
+            "/" + string.Join('/', segments)
+            + QueryString.Create(values).Value);
+        var neighborhood = values.TryGetValue("radius", out var radius);
+        if (neighborhood && radius == "5")
+        {
+            candidates.Add(new(
+                $"neighborhood:{segments[2]}:{segments[3]}:5"));
+        }
+        responseCacheControl = neighborhood
+            ? "public, max-age=300, stale-while-revalidate=600"
+            : "public, max-age=300";
+        return true;
+    }
+
+    private static bool TryGetProfileRankingQueryKeys(
+        string[] segments,
+        out string[] keys)
+    {
+        keys = [];
+        if (segments.Length < 4
+            || segments[0] != "api"
+            || segments[1] != "rankings")
+        {
+            return false;
+        }
+
+        if (segments[2] == "bands"
+            && BandComboIds.IsValidBandType(segments[3]))
+        {
+            if (segments.Length == 5 && segments[4] != "combos")
+            {
+                keys = ["combo", "rankBy"];
+                return true;
+            }
+            if (segments.Length == 6)
+            {
+                keys = segments[5] switch
+                {
+                    "songs" => ["combo", "limit"],
+                    "song-rows" => ["combo"],
+                    "history" => ["combo", "days"],
+                    _ => [],
+                };
+                return keys.Length > 0;
+            }
+            return false;
+        }
+
+        if (GlobalLeaderboardPersistence.IsValidInstrument(segments[2]))
+        {
+            if (segments.Length == 4)
+            {
+                keys = ["rankBy", "leeway"];
+                return true;
+            }
+            if (segments.Length == 5)
+            {
+                keys = segments[4] switch
+                {
+                    "history" => ["days", "leeway"],
+                    "neighborhood" => ["radius"],
+                    _ => [],
+                };
+                return keys.Length > 0;
+            }
+        }
+
+        if (segments[2] == "composite")
+        {
+            if (segments.Length == 4)
+                return true;
+            if (segments.Length == 5 && segments[4] == "neighborhood")
+            {
+                keys = ["radius"];
+                return true;
+            }
+        }
+        if (segments.Length == 5
+            && segments[2] == "family"
+            && SoloFamilyRankingScopes.IsValid(segments[3]))
+        {
+            keys = ["rankBy"];
+            return true;
+        }
+        if (segments.Length == 4 && segments[2] == "combo")
+        {
+            keys = ["combo", "instruments", "rankBy"];
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -730,7 +915,8 @@ internal static class PublicApiResponseCachePolicy
                 "rankings",
                 StringComparison.OrdinalIgnoreCase))
         {
-            return segments.Length == 3
+            return TryGetProfileRankingQueryKeys(segments, out _)
+                || segments.Length == 3
                 && (GlobalLeaderboardPersistence
                         .IsValidInstrument(segments[2])
                     || string.Equals(

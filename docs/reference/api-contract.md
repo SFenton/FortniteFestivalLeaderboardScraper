@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: service
-last_verified: 2026-09-29
-last_verified_commit: 2f299474
+last_verified: 2026-10-12
+last_verified_commit: 0a953da1
 sources:
   - FSTService/Api/ApiEndpoints.cs
   - FSTService/Api/*Endpoints.cs
@@ -303,12 +303,36 @@ Aggregate player scopes intentionally use different formulas:
   preserve the endpoint family's `Cache-Control` and content type. Direct,
   precomputed, and projected JSON use the same explicit relaxed Unicode
   encoder so non-ASCII strings preserve exact UTF-8 bytes and ETags.
-- Only overview `pageSize=25|50` for the five canonical ranking metrics may
+- Overview `pageSize=25|50` for the five canonical ranking metrics may
   lazily compute and write through while unfrozen. One process-local
   single-flight owns each publication/key build. Case, query order, and
   equivalent integer spellings normalize to one semantic key. Responses at or above one
   second, over 2 MiB, non-200, non-JSON, failed, or raced by a freeze are served
   if otherwise valid but are not cached.
+- Scoped ranking cards also preserve successful unfrozen responses in the
+  current publication: band summary, best/worst songs, song rows, and rank
+  history; player instrument/family/combo/composite rankings; and instrument
+  history and instrument/composite neighborhoods. These snapshots refresh on
+  each unfrozen read, so asynchronous history updates are not hidden by an
+  earlier response. During a scrape or failed-candidate isolation they serve
+  the exact last saved current-publication bytes, ETag, and publication ID.
+  `X-FST-Selected-*` activity headers do not vary these route-scoped payloads.
+  Omitted defaults, integer spellings, query order, and equivalent combo
+  selectors share a snapshot; subject, band type, instrument, and meaningful
+  filters remain isolated. Only known query shapes with songs `limit=1..20`,
+  history `days=1..3650`, neighborhood `radius=1..25`, valid combos/metrics,
+  and absent or `1` leeway are admitted. The existing one-second/2-MiB write
+  limits, readiness, publication, and no-working-generation
+  gates still apply. A cold frozen request or missing projection retains the
+  existing `503`/`Retry-After` error, not an invented empty result. Normal
+  unfrozen errors remain errors even when an older snapshot exists.
+  Default-radius neighborhoods can also read their existing eager
+  registered-player publication rows without a prior request snapshot;
+  nondefault radii never alias that default payload.
+  Fresh card reads do not enter the overview single-flight dictionary or
+  serialize independent requests, avoiding retained per-subject build gates.
+  A response pinned to another publication is never saved as a current
+  snapshot, even if its HTTP status and JSON payload would otherwise qualify.
 - During a `max-score-maintenance:v1:<manifest-sha256>` freeze, a
   covered publication-bound route may serve only an existing L1/L2 published
   cache hit; the cache never builds or writes while frozen.

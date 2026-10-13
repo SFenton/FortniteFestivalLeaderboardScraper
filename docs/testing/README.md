@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-29
-last_verified_commit: f65a3a4a
+last_verified: 2026-10-12
+last_verified_commit: 0a953da1
 sources:
   - FSTService.Tests/Unit/FrozenAcquisitionAbandonmentCommandTests.cs
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
@@ -1169,6 +1169,9 @@ dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --filter 'FullyQualifiedName~PublicationApiResponseCache|FullyQualifiedName~Lazy_publication_cache|FullyQualifiedName~SongsCache|FullyQualifiedName~PublicReadGateTests|FullyQualifiedName~FreezeSafePublicationCache|FullyQualifiedName~FreezeSafeFirstPageAlias|FullyQualifiedName~ScrapeTimePrecomputerTests|FullyQualifiedName~MaxScoreMaintenanceWorkflowTests'
 
 dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
+  --filter 'FullyQualifiedName~Rankings_BandCards|FullyQualifiedName~Rankings_BandSongs|FullyQualifiedName~Rankings_BandSongRows'
+
+dotnet test FSTService.Tests/FSTService.Tests.csproj -c Release \
   --filter FullyQualifiedName~PublicationApiCacheBenchmarkTests \
   --logger 'console;verbosity=detailed'
 ```
@@ -1182,6 +1185,21 @@ finite route normalization, canonical alias context isolation, single-flight
 waiter sharing, failed/cancelled build recovery, current/previous cleanup,
 atomic staging/swap failure recovery, telemetry redaction, and unchanged route
 classification/rate limiting.
+
+Scoped-card regressions cover selection-header-independent identities,
+normalized defaults and bounded filters, unfrozen refresh, frozen L2 recovery,
+failed-candidate isolation, real unavailable responses, and freeze-raced writes.
+Cold default-radius neighborhood reads also recover existing canonical
+registered-player rows without aliasing different radii.
+Concurrent fresh scoped reads do not share the retained overview build gates.
+Responses pinned to another publication cannot poison the current snapshot.
+The band-card integration test publishes a six-song fixture, saves actual
+best/worst and song-row responses through the HTTP pipeline, freezes reads and
+advances an unpromoted projection, then compares headerless iOS/Android/Windows
+request bytes, ETags, publication identity, and conditional `304` behavior
+against the web response. A cold miss remains `503`/`Retry-After`, and an
+unfrozen projection failure is not hidden. This is service transport coverage,
+not a claim that native applications or a live production scrape were run.
 
 The refreshed 722,994-byte fixture produced L2 cold p50/p95
 `1.452/3.273 ms`, L1 warm p50/p95 `0.199/0.313 ms`, and 10,000-row

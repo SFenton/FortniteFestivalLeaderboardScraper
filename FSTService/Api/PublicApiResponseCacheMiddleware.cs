@@ -67,7 +67,8 @@ public sealed class PublicApiResponseCacheMiddleware
         if (FailedCandidateReadRoutingPolicy.EndpointHandlesRead(
                 context,
                 safety.FailedCandidateIsolationActive)
-            && !plan.FreezeCritical)
+            && !plan.FreezeCritical
+            && !plan.AllowWriteThrough)
         {
             if (publicationBound)
                 telemetry.Record(context, PublicApiCacheOutcome.Bypassed);
@@ -198,13 +199,12 @@ public sealed class PublicApiResponseCacheMiddleware
         }
 
         if (!safety.IsFrozen
-            && plan.FreezeCritical
             && plan.AllowWriteThrough
             && cacheService is not null
             && cacheService.CurrentPublicationId
                 is long publicationId)
         {
-            await ExecuteSingleFlightBuildAsync(
+            await ExecuteWriteThroughBuildAsync(
                 context,
                 metaDb,
                 gate,
@@ -347,7 +347,7 @@ public sealed class PublicApiResponseCacheMiddleware
         return true;
     }
 
-    private async Task ExecuteSingleFlightBuildAsync(
+    private async Task ExecuteWriteThroughBuildAsync(
         HttpContext context,
         IMetaDatabase metaDb,
         PublicReadGateService gate,
@@ -357,12 +357,13 @@ public sealed class PublicApiResponseCacheMiddleware
         long publicationId,
         PublicationReadContextService? publicationService)
     {
-        await using var buildLease =
-            await cacheService.AcquireBuildLeaseAsync(
+        await using var buildLease = plan.FreezeCritical
+            ? await cacheService.AcquireBuildLeaseAsync(
                 publicationId,
                 plan.RequestCacheKey,
-                context.RequestAborted);
-        if (buildLease.Waited)
+                context.RequestAborted)
+            : null;
+        if (buildLease?.Waited == true)
         {
             telemetry.RecordOperation(
                 context,
@@ -377,12 +378,16 @@ public sealed class PublicApiResponseCacheMiddleware
 
         var retrySafety =
             gate.GetCacheSafetySnapshot();
-        var existing = TryGetServiceHit(
-            context,
-            plan,
-            cacheService,
-            publicationService,
-            retrySafety);
+        // Scoped card snapshots refresh on normal reads (history can advance
+        // within a publication), but never rebuild during a freeze.
+        var existing = plan.FreezeCritical || retrySafety.IsFrozen
+            ? TryGetServiceHit(
+                context,
+                plan,
+                cacheService,
+                publicationService,
+                retrySafety)
+            : null;
         if (existing is not null)
         {
             if (await TryServeHitAsync(
@@ -459,7 +464,10 @@ public sealed class PublicApiResponseCacheMiddleware
         var contentType =
             context.Response.ContentType
             ?? string.Empty;
-        if (context.Response.StatusCode
+        var responsePublication = context.GetPublicationReadContext();
+        if (responsePublication is not null
+            && responsePublication.PublicationId != publicationId
+            || context.Response.StatusCode
                 != StatusCodes.Status200OK
             || !contentType.StartsWith(
                 "application/json",
