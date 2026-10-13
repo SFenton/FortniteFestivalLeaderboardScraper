@@ -273,6 +273,13 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   On the smaller tables, scrape `1540`'s composite rank-history snapshot took
   168 seconds (342 to 373 in `1536` to `1539`), and all snapshots 399 seconds
   (491 to 602).
+- Since 2026-10-12 23:14Z the 10 rank-history tables use
+  `autovacuum_vacuum_scale_factor = 0.02` (applied live during scrape `1559`'s
+  fetch; #227). Since the scrape `1559` boundary (2026-10-13 00:47Z) the
+  worker and API run master `c56460fa`, whose schema initializer keeps that
+  setting. The retirement timer's checkout is at the same commit and prunes
+  snapshot archives after 24 hours; the 2026-10-12 backlog prune deleted
+  2,781 archives (173.4 GiB), leaving 9.1 GiB.
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
