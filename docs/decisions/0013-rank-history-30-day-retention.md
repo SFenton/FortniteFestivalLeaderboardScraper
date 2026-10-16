@@ -47,8 +47,9 @@ under heavier locks or with triggers on hot writers.
 ## Consequences
 
 - About 300 GB is reclaimed and daily growth stays near one day's rows.
-- Rank history older than 30 days is gone from the database. The archives on
-  the FST drive are the only copy until the operator removes them. The player
+- Rank history older than 30 days is gone from the database. The rewrite's
+  archives were the only other copy; the operator removed them on
+  2026-10-16. The player
   data export now carries about 30 days of rank history.
 - Daily retention deletes about one day of rows per scope after each UTC
   midnight, once.
