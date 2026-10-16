@@ -16,7 +16,7 @@ public sealed class BandRankHistoryOptions
     /// CompactDaily writes one compact daily partition per band type after
     /// publication and keeps <see cref="RetentionDays"/> of them.
     /// </summary>
-    public BandRankHistoryMode Mode { get; set; } = BandRankHistoryMode.Inline;
+    public BandRankHistoryMode Mode { get; set; } = BandRankHistoryMode.CompactDaily;
 
     /// <summary>Controls whether history snapshots write legacy tables, vNext tables, or both.</summary>
     public BandRankHistoryWriteMode WriteMode { get; set; } = BandRankHistoryWriteMode.Legacy;

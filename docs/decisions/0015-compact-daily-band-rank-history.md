@@ -47,10 +47,12 @@ into the compact tables:
 
 ## Consequences
 
-- At about 21.7 million ranking rows a day, 31 days are estimated at about
-  160 GB. The first scrape after UTC midnight runs one bulk build per band type
-  after publication. This is about 2 to 3 GB of writes plus index builds; the
-  production canary measures it.
+- About 21.7 million ranking rows a day at about 240 bytes each (index
+  included) is about 5.2 GB a day, or about 160 GB for 31 days. A production
+  build of Duets during a fetch window (4.1 million rows, rolled back) took 34
+  seconds to insert and 1 second to index, about 1 GB. All three band types
+  should add about 3 to 4 minutes to the first scrape's cleanup after UTC
+  midnight.
 - Every team gets a point every day, so charts have no gaps, and a team that
   has not changed still shows a flat line.
 - The frozen April–July compact partitions are older than 30 days, so the

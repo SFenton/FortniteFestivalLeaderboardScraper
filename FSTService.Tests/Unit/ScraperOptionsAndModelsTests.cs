@@ -392,11 +392,12 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
-    public void BandRankHistoryOptions_DefaultsKeepV2ShadowWritesDisabled()
+    public void BandRankHistoryOptions_DefaultsWriteCompactDailyHistoryForThirtyDays()
     {
         var opts = new BandRankHistoryOptions();
 
-        Assert.Equal(BandRankHistoryMode.Inline, opts.Mode);
+        Assert.Equal(BandRankHistoryMode.CompactDaily, opts.Mode);
+        Assert.Equal(30, opts.RetentionDays);
         Assert.Equal(BandRankHistoryWriteMode.Legacy, opts.WriteMode);
         Assert.True(opts.UseLatestState);
         Assert.True(opts.UseNarrowHistory);

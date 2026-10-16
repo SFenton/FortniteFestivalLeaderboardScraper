@@ -3186,13 +3186,17 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunCleanupAsync_WithDatabasePressure_SkipsBandCleanupButRunsRankHistoryRetention()
+    public async Task RunCleanupAsync_WithDatabasePressure_SkipsLegacyBandCleanupButRunsRankHistoryRetention()
     {
         _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new DatabasePressureSnapshot(true, 1, 0, 0, 0, ["active vacuum count 1"])));
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            bandRankHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Background });
         var ctx = CreateContext();
 
-        await _sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
+        await sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
 
         await _databasePressureMonitor.Received(1)
             .GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>());
