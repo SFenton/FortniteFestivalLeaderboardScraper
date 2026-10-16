@@ -866,7 +866,14 @@ public sealed class PostScrapeOrchestrator
         if (cleanupRankHistoryRetention)
             await RunPhaseAsync(ctx, "Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
 
-        if (cleanupBandRankHistoryRetention)
+        // Compact daily band history writes one partition a day and drops whole
+        // expired partitions (catalog-only), so it is not pressure-gated either.
+        if (cleanupBandRankHistoryRetention
+            && _bandRankHistoryOptions.Value.Mode == BandRankHistoryMode.CompactDaily)
+        {
+            await RunPhaseAsync(ctx, "Cleanup.BandRankHistoryRetention", () => MaintainCompactBandRankHistoryAsync(ctx, ct));
+        }
+        else if (cleanupBandRankHistoryRetention)
         {
             var skipReason = await GetMaintenanceCleanupSkipReasonAsync(
                 "band rank history retention",
@@ -1337,6 +1344,103 @@ public sealed class PostScrapeOrchestrator
 
         if (failures.Count > 0)
             throw new AggregateException("One or more rank history retention cleanup operations failed.", failures);
+    }
+
+    private async Task MaintainCompactBandRankHistoryAsync(ScrapePassContext ctx, CancellationToken ct)
+    {
+        var failures = new List<Exception>();
+        var options = _bandRankHistoryOptions.Value;
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        foreach (var bandType in BandInstrumentMapping.AllBandTypes)
+        {
+            ct.ThrowIfCancellationRequested();
+            _progress.SetSubOperation($"cleanup_band_rank_history_{bandType}");
+            try
+            {
+                var writeStarted = DateTime.UtcNow;
+                var write = await Task.Run(() => _persistence.Meta.WriteBandRankHistoryCompactDaily(
+                    bandType,
+                    ctx.ScrapeId,
+                    today,
+                    Math.Max(0, options.CommandTimeoutSeconds),
+                    ct), ct);
+                if (write.Written)
+                {
+                    RecordCleanupTiming(ctx, "band_rank_history.daily_write", bandType, writeStarted, rowsWritten: write.Rows);
+                    _log.LogInformation(
+                        "Band rank history for {BandType} on {SnapshotDate}: wrote {Rows:N0} compact point(s), {NewTeams:N0} new team(s), attached in {Attempts} attempt(s).",
+                        bandType,
+                        write.SnapshotDate,
+                        write.Rows,
+                        write.NewTeams,
+                        write.AttachAttempts);
+                }
+
+                var retentionStarted = DateTime.UtcNow;
+                var retention = await Task.Run(() => _persistence.Meta.DropExpiredBandRankHistoryPartitions(
+                    bandType,
+                    today,
+                    options.RetentionDays,
+                    ct), ct);
+                if (retention.DroppedPartitions.Count > 0)
+                {
+                    RecordCleanupTiming(
+                        ctx,
+                        "band_rank_history.partition_retention",
+                        bandType,
+                        retentionStarted,
+                        rowsDeleted: retention.EstimatedRowsDropped,
+                        scopeCount: retention.DroppedPartitions.Count);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex,
+                    "Band rank history daily write or retention failed for {BandType}. Continuing without blocking fresh data publication.",
+                    bandType);
+                failures.Add(ex);
+            }
+            finally
+            {
+                _progress.ReportPhaseItemComplete();
+            }
+        }
+
+        if (failures.Count > 0)
+            throw new AggregateException("One or more band rank history daily writes or retention runs failed.", failures);
+    }
+
+    private void RecordCleanupTiming(
+        ScrapePassContext ctx,
+        string subphase,
+        string itemKey,
+        DateTime startedAt,
+        long? rowsWritten = null,
+        long? rowsDeleted = null,
+        long? scopeCount = null)
+    {
+        if (ctx.ScrapeId <= 0)
+            return;
+
+        var completedAt = DateTime.UtcNow;
+        try
+        {
+            _persistence.Meta.RecordScrapePhaseTiming(new ScrapePhaseTimingRecord(
+                ctx.ScrapeId,
+                "Cleanup",
+                subphase,
+                itemKey,
+                startedAt,
+                completedAt,
+                (long)(completedAt - startedAt).TotalMilliseconds,
+                RowsWritten: rowsWritten,
+                RowsDeleted: rowsDeleted,
+                ScopeCount: scopeCount));
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Failed to persist cleanup timing for {Subphase} {ItemKey}.", subphase, itemKey);
+        }
     }
 
     private async Task CleanupBandRankHistoryRetentionAsync(CancellationToken ct)

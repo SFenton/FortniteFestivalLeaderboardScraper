@@ -12,7 +12,9 @@ public sealed class BandRankHistoryOptions
     /// <summary>
     /// Execution mode for band rank history snapshots.
     /// Inline preserves legacy blocking behavior; Background enqueues resumable jobs;
-    /// Disabled skips history writes while leaving current rankings published.
+    /// Disabled skips history writes while leaving current rankings published;
+    /// CompactDaily writes one compact daily partition per band type after
+    /// publication and keeps <see cref="RetentionDays"/> of them.
     /// </summary>
     public BandRankHistoryMode Mode { get; set; } = BandRankHistoryMode.Inline;
 
@@ -52,8 +54,12 @@ public sealed class BandRankHistoryOptions
     /// <summary>Command timeout for history maintenance SQL. Zero means provider/infinite default.</summary>
     public int CommandTimeoutSeconds { get; set; } = 0;
 
-    /// <summary>History retention window in days.</summary>
-    public int RetentionDays { get; set; } = 365;
+    /// <summary>
+    /// History retention window in days. In <see cref="BandRankHistoryMode.CompactDaily"/>
+    /// whole compact partitions whose dates all fall before today minus this many
+    /// days are dropped.
+    /// </summary>
+    public int RetentionDays { get; set; } = 30;
 
     /// <summary>Allow best-effort history chunks to use synchronous_commit=off inside their transaction.</summary>
     public bool SynchronousCommitOff { get; set; } = false;
@@ -79,6 +85,7 @@ public enum BandRankHistoryMode
     Inline,
     Background,
     Disabled,
+    CompactDaily,
 }
 
 public enum BandRankHistoryWriteMode

@@ -577,6 +577,10 @@ cleanup, notification gating, and service-level retention use that contract.
 Solo and composite rank-history retention is not pressure-gated: it deletes
 only once per UTC day per table (see
 [data storage: rank-history retention](../architecture/data-storage.md#rank-history-retention)).
+Neither is `Cleanup.BandRankHistoryRetention` in the `CompactDaily` band
+history mode, where it writes the day's compact partition and drops expired
+ones (see
+[data storage: band rank history](../architecture/data-storage.md#band-rank-history)).
 Publication-critical phases may never be skipped: snapshot-only legacy rank
 recompute completes its critical contract without running the legacy update,
 and any persisted critical `skipped` row is invalid and blocks resume or

@@ -1302,7 +1302,7 @@ public sealed class RankingsCalculator
                     bandType,
                     totalChartedSongs,
                     _bandTeamRankingOptions.WithComputeRowFingerprints(
-                        _bandRankHistoryOptions.Mode != BandRankHistoryMode.Disabled));
+                        _bandRankHistoryOptions.Mode is BandRankHistoryMode.Inline or BandRankHistoryMode.Background));
 
                 perBandSw.Stop();
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
@@ -1403,6 +1403,23 @@ public sealed class RankingsCalculator
                         rowsInserted: 0,
                         rowsSkipped: 0,
                         message: "history disabled",
+                        updatedAtUtc: DateTime.UtcNow);
+                    break;
+
+                case BandRankHistoryMode.CompactDaily:
+                    // Written once per UTC day from the published rankings during cleanup.
+                    _progress.ReportBandRankHistoryProgress(
+                        mode.ToString(),
+                        "deferred",
+                        bandType,
+                        rankingScope: null,
+                        comboId: null,
+                        chunksCompleted: 0,
+                        chunksTotal: 0,
+                        rowsScanned: 0,
+                        rowsInserted: 0,
+                        rowsSkipped: 0,
+                        message: "compact daily history is written after publication",
                         updatedAtUtc: DateTime.UtcNow);
                     break;
 
