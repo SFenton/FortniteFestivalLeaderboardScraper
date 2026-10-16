@@ -153,9 +153,26 @@ the cutoff advances past `rank_history_retention_state`. It refuses a table
 over 20 million estimated rows that has no state row; the
 [rewrite runbook](../database/RankHistoryRetentionRewriteRunbook.md) reduces
 such a table first. `RankHistoryCleanupBatchSize` and
-`RankHistoryCleanupMaxBatches` were removed. Band rank history keeps
-`BandRankHistory:RetentionDays` and the batch keys
-`DatabaseMaintenance:BandRankHistoryCleanup*`.
+`RankHistoryCleanupMaxBatches` were removed. Band rank history has its own
+retention (see below).
+
+## Band rank history
+
+| Key | Default | Purpose |
+|---|---:|---|
+| `BandRankHistory:Mode` | `CompactDaily` | `CompactDaily` writes one compact daily partition per band type after publication; `Disabled` writes nothing; `Inline` and `Background` run the older v2 writer |
+| `BandRankHistory:RetentionDays` | `30` | Days of band history kept. `CompactDaily` drops whole partitions whose dates are all older than this |
+| `BandRankHistory:CommandTimeoutSeconds` | `0` | Statement timeout for history SQL; `0` waits indefinitely (the phase is still cancellable) |
+| `BandRankHistory:CompactV3{Duets,Trios,Quad}ReadEnabled` | `true` | Read the compact tables in the `Inline`, `Background`, and `Disabled` modes; `CompactDaily` always reads them |
+
+The API and worker both read `BandRankHistory:Mode` (production Compose maps
+`BAND_RANK_HISTORY_MODE` to both): the worker writes, and the API reports
+history status from it. In `CompactDaily`, `Cleanup.BandRankHistoryRetention`
+writes the day's partition, then drops expired ones, and is not
+pressure-gated. The other modes keep the pressure-gated row deletes sized by
+`DatabaseMaintenance:BandRankHistoryCleanup*`. See
+[data storage: band rank history](../architecture/data-storage.md#band-rank-history)
+and [ADR 0015](../decisions/0015-compact-daily-band-rank-history.md).
 
 ## Publication API cache safety bounds
 
@@ -508,7 +525,7 @@ Pair-completion callbacks stay serialized with a monotonically increasing count.
 | `BandTeamRankings:WriteMode` | `ComboBatched` | Insert overall rows, then each combo's rows in its own statement (`Monolithic` inserts all rows in one statement) |
 | `BandTeamRankings:MaxParallelBandTypes` | `1` | Band types whose team rankings rebuild at once |
 | `BandTeamRankings:OverlapRankHistorySnapshotsWithBandRankings` | `false` | Run rank-history snapshots concurrently with band team rankings; the rankings pass still waits for both |
-| `BandTeamRankings:ComputeRowFingerprints` | `true` | Store each ranking row's band rank-history fingerprint during the rebuild. The worker overrides it: it is off whenever `BandRankHistory:Mode` is `Disabled`, and on otherwise |
+| `BandTeamRankings:ComputeRowFingerprints` | `true` | Store each ranking row's band rank-history fingerprint during the rebuild. The worker overrides it: it is on only when `BandRankHistory:Mode` is `Inline` or `Background` |
 | `Scraper:RankHistorySnapshotMaxDegreeOfParallelism` | `1` | Concurrent rank-history snapshot writers (one per solo instrument plus composite) |
 | `Scraper:StartRankHistorySnapshotsAfterInstrumentRankings` | `false` | With the overlap option on, start the snapshot and band-ranking branches right after per-instrument rankings, concurrently with composite, solo family, and combo rankings; see below |
 | `Scraper:UseRankHistoryLatestState` | `false` | Compare rank-history snapshots against the maintained latest row per account instead of scanning each instrument's and the composite's whole history; see below |
@@ -602,9 +619,9 @@ latest rows. The tables are created on first use, so no deploy hook is needed.
 
 Each ranking row carries `row_fingerprint`, an md5 over its metrics that band
 rank-history snapshots compare against their latest row. With band rank history
-`Disabled` (production), the rebuild stores an empty fingerprint instead; a
-later history snapshot computes empty fingerprints itself, giving the same
-value. Computing it cost about 2.4 µs per row, about 52 CPU-seconds across
+`Disabled` or `CompactDaily`, the rebuild stores an empty fingerprint instead;
+v2 history snapshots compute empty fingerprints themselves, and the compact
+daily write computes them once a day for the rows it stores. Computing it cost about 2.4 µs per row, about 52 CPU-seconds across
 the 21.6 million band ranking rows of a scrape.
 
 `ComboBatched` was adopted when disk headroom was tight (a single monolithic

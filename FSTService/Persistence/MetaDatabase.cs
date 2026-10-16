@@ -11379,6 +11379,19 @@ public sealed partial class MetaDatabase : IMetaDatabase
                 job = ReadBandRankHistoryJob(reader);
         }
 
+        // Compact daily history has no background jobs; old job rows from earlier
+        // modes must not report catch-up work.
+        if (_bandRankHistoryOptions.Mode == BandRankHistoryMode.CompactDaily)
+        {
+            return new BandRankHistoryStatusDto
+            {
+                HistoryStatus = freshnessStatus,
+                CurrentRankingsComputedAt = currentComputedAt,
+                HistoryComputedThrough = historyThrough,
+                HistoryMessage = freshnessMessage,
+            };
+        }
+
         if (_bandRankHistoryOptions.Mode == BandRankHistoryMode.Disabled)
         {
             return new BandRankHistoryStatusDto
@@ -11876,7 +11889,9 @@ public sealed partial class MetaDatabase : IMetaDatabase
         string bandType,
         out BandRankHistoryCompactV3Source source)
     {
-        if (_bandRankHistoryOptions.CompactV3DuetsReadEnabled
+        // Compact daily history writes only the compact tables, so it reads them.
+        var compactDaily = _bandRankHistoryOptions.Mode == BandRankHistoryMode.CompactDaily;
+        if ((compactDaily || _bandRankHistoryOptions.CompactV3DuetsReadEnabled)
             && string.Equals(bandType, "Band_Duets", StringComparison.Ordinal)
             && IsBandRankHistoryCompactV3Ready(
                 conn,
@@ -11893,7 +11908,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
             return true;
         }
 
-        if (_bandRankHistoryOptions.CompactV3TriosReadEnabled
+        if ((compactDaily || _bandRankHistoryOptions.CompactV3TriosReadEnabled)
             && string.Equals(bandType, "Band_Trios", StringComparison.Ordinal)
             && IsBandRankHistoryCompactV3Ready(
                 conn,
@@ -11910,7 +11925,7 @@ public sealed partial class MetaDatabase : IMetaDatabase
             return true;
         }
 
-        if (_bandRankHistoryOptions.CompactV3QuadReadEnabled
+        if ((compactDaily || _bandRankHistoryOptions.CompactV3QuadReadEnabled)
             && string.Equals(bandType, "Band_Quad", StringComparison.Ordinal)
             && IsBandRankHistoryCompactV3Ready(
                 conn,

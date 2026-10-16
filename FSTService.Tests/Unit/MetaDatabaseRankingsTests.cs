@@ -3090,6 +3090,181 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    [Fact]
+    public void CompactDaily_WritesPublishedRankingsAsOneDailyPartitionThatMatchesV2History()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+            UseLatestState = false,
+        });
+        using var v2Db = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly);
+        var comboId = BandComboIds.FromEpicRawCombo("0:1");
+        var expectedOverall = v2Db.GetBandRankHistory("Band_Duets", "p1:p2");
+        var expectedCombo = v2Db.GetBandRankHistory("Band_Duets", "p1:p2", comboId);
+        Assert.NotEmpty(expectedOverall);
+        Assert.NotEmpty(expectedCombo);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        using var compactDb = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly, mode: BandRankHistoryMode.CompactDaily);
+        var first = compactDb.WriteBandRankHistoryCompactDaily("Band_Duets", scrapeId: 41, today);
+        var second = compactDb.WriteBandRankHistoryCompactDaily("Band_Duets", scrapeId: 42, today);
+
+        Assert.True(first.Written);
+        Assert.Equal(CountRows("band_team_rankings_current_band_duets"), first.Rows);
+        Assert.Equal(3, first.NewTeams);
+        Assert.False(second.Written);
+        Assert.Equal("already written", second.Reason);
+        Assert.Equal(
+            [$"band_team_rank_history_points_v3_duets_d{today:yyyyMMdd}"],
+            CompactPartitions("band_team_rank_history_points_v3_duets"));
+
+        // The compact reader serves exactly what the v2 writer would have stored.
+        Assert.Equal(JsonSerializer.Serialize(expectedOverall), JsonSerializer.Serialize(compactDb.GetBandRankHistory("Band_Duets", "p1:p2")));
+        Assert.Equal(JsonSerializer.Serialize(expectedCombo), JsonSerializer.Serialize(compactDb.GetBandRankHistory("Band_Duets", "p1:p2", comboId)));
+
+        // Old background-job rows do not make compact daily history report catch-up work.
+        compactDb.EnqueueBandRankHistoryJob(41, "Band_Duets", today, BandRankHistoryMode.Background.ToString());
+        var status = compactDb.GetBandRankHistoryStatus("Band_Duets");
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(today.ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+        Assert.Null(status.HistoryMessage);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT (SELECT count(*) FROM pg_constraint WHERE conname LIKE '%_d{today:yyyyMMdd}_bound'),
+                   (SELECT array_to_string(reloptions, ',') FROM pg_class WHERE relname = 'band_team_rank_history_points_v3_duets_d{today:yyyyMMdd}'),
+                   (SELECT count(*) FROM band_team_rank_history_points_v3_duets WHERE snapshot_id = 41 AND octet_length(row_fingerprint) = 16)
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(0L, reader.GetInt64(0));
+        Assert.DoesNotContain("autovacuum_enabled", reader.IsDBNull(1) ? "" : reader.GetString(1));
+        Assert.Equal(first.Rows, reader.GetInt64(2));
+    }
+
+    [Fact]
+    public void CompactDaily_RebuildsAnInterruptedPartitionAndAddsNewTeamsLater()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var yesterday = today.AddDays(-1);
+        using var compactDb = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly, mode: BandRankHistoryMode.CompactDaily);
+        compactDb.WriteBandRankHistoryCompactDaily("Band_Duets", scrapeId: 1, yesterday);
+
+        // An interrupted build leaves an unattached table with today's name behind.
+        ExecuteSql($"""
+            CREATE TABLE band_team_rank_history_points_v3_duets_d{today:yyyyMMdd}
+                (LIKE band_team_rank_history_points_v3_duets INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
+            """);
+        var persistence = new BandLeaderboardPersistence(_fixture.DataSource, Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries("song_1", "Band_Duets", [MakeBandEntry(["p7", "p8"], "0:1", 700)]);
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        var result = compactDb.WriteBandRankHistoryCompactDaily("Band_Duets", scrapeId: 2, today);
+
+        Assert.True(result.Written);
+        Assert.Equal(1, result.NewTeams);
+        Assert.Equal(2, CompactPartitions("band_team_rank_history_points_v3_duets").Count);
+        var history = compactDb.GetBandRankHistory("Band_Duets", "p1:p2");
+        Assert.Equal([yesterday, today], history.Select(h => DateOnly.Parse(h.SnapshotDate, CultureInfo.InvariantCulture)).ToArray());
+        Assert.Single(compactDb.GetBandRankHistory("Band_Duets", "p7:p8"));
+    }
+
+    [Fact]
+    public void CompactDaily_RetentionDropsOnlyPartitionsWhollyBeforeTheWindow()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        using var compactDb = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly, mode: BandRankHistoryMode.CompactDaily);
+        foreach (var daysAgo in new[] { 40, 31, 30, 0 })
+            compactDb.WriteBandRankHistoryCompactDaily("Band_Duets", scrapeId: 100 - daysAgo, today.AddDays(-daysAgo));
+        // A frozen monthly partition from the earlier compaction.
+        var month = new DateOnly(today.Year, today.Month, 1).AddMonths(-4);
+        ExecuteSql($"""
+            CREATE TABLE band_team_rank_history_points_v3_duets_{month:yyyyMM}
+                PARTITION OF band_team_rank_history_points_v3_duets
+                FOR VALUES FROM ('{month:yyyy-MM-dd}') TO ('{month.AddMonths(1):yyyy-MM-dd}');
+            """);
+
+        var retention = compactDb.DropExpiredBandRankHistoryPartitions("Band_Duets", today, retentionDays: 30);
+        var again = compactDb.DropExpiredBandRankHistoryPartitions("Band_Duets", today, retentionDays: 30);
+
+        Assert.Equal(today.AddDays(-30), retention.Cutoff);
+        Assert.Equal(
+            new[]
+            {
+                $"band_team_rank_history_points_v3_duets_{month:yyyyMM}",
+                $"band_team_rank_history_points_v3_duets_d{today.AddDays(-40):yyyyMMdd}",
+                $"band_team_rank_history_points_v3_duets_d{today.AddDays(-31):yyyyMMdd}",
+            }.Order(StringComparer.Ordinal),
+            retention.DroppedPartitions.Order(StringComparer.Ordinal));
+        Assert.Empty(again.DroppedPartitions);
+        Assert.Equal(
+            [$"band_team_rank_history_points_v3_duets_d{today.AddDays(-30):yyyyMMdd}", $"band_team_rank_history_points_v3_duets_d{today:yyyyMMdd}"],
+            CompactPartitions("band_team_rank_history_points_v3_duets"));
+        var dates = compactDb.GetBandRankHistory("Band_Duets", "p1:p2", days: 30)
+            .Select(h => DateOnly.Parse(h.SnapshotDate, CultureInfo.InvariantCulture)).ToArray();
+        Assert.Equal([today.AddDays(-30), today], dates);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT min_snapshot_date, max_snapshot_date FROM band_rank_history_compact_v3_state WHERE band_type = 'Band_Duets'";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(today.AddDays(-30), reader.GetFieldValue<DateOnly>(0));
+        Assert.Equal(today, reader.GetFieldValue<DateOnly>(1));
+    }
+
+    [Fact]
+    public void CompactDaily_WithoutBandRankingsWritesNothing()
+    {
+        using var compactDb = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly, mode: BandRankHistoryMode.CompactDaily);
+
+        var result = compactDb.WriteBandRankHistoryCompactDaily("Band_Quad", scrapeId: 1, DateOnly.FromDateTime(DateTime.UtcNow));
+
+        Assert.False(result.Written);
+        Assert.Equal("no band rankings to record", result.Reason);
+        Assert.Empty(CompactPartitions("band_team_rank_history_points_v3_quad"));
+    }
+
+    private List<string> CompactPartitions(string parent)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+            WHERE i.inhparent = to_regclass(@parent) ORDER BY c.relname
+            """;
+        cmd.Parameters.AddWithValue("parent", $"public.{parent}");
+        using var reader = cmd.ExecuteReader();
+        var names = new List<string>();
+        while (reader.Read())
+            names.Add(reader.GetString(0));
+        return names;
+    }
+
+    private long CountRows(string table)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT count(*) FROM {table}";
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    private void ExecuteSql(string sql)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+
     private MetaDatabase CreateMetaDatabase(
         BandRankHistoryApiReadSource apiReadSource,
         bool compactV3DuetsReadEnabled = false,

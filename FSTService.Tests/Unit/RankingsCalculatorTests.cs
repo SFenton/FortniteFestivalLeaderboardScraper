@@ -636,8 +636,9 @@ public sealed class RankingsCalculatorTests : IDisposable
             MakeBandEntry(["p3", "p4"], "0:3", 1300),
             MakeBandEntry(["p5", "p6"], "0:1", 800),
         ]);
+        var sut = CreateSut(bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Inline });
 
-        _sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 2);
+        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 2);
 
         var (overall, totalTeams) = _metaFixture.Db.GetBandTeamRankings("Band_Duets");
         Assert.Equal(3, totalTeams);

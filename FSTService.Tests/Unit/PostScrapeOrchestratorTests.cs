@@ -432,7 +432,8 @@ public class PostScrapeOrchestratorTests : IDisposable
         IPostScrapePhaseFaultInjector? phaseFaultInjector = null,
         IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null,
         DatabaseMaintenanceOptions? databaseMaintenanceOptions = null,
-        BandCurrentProjectionBuilder? bandCurrentProjectionBuilder = null)
+        BandCurrentProjectionBuilder? bandCurrentProjectionBuilder = null,
+        BandRankHistoryOptions? bandRankHistoryOptions = null)
     {
         var activePersistence = persistence ?? _persistence;
         var scraper = Substitute.For<GlobalLeaderboardScraper>(
@@ -522,7 +523,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             databasePressureMonitor: _databasePressureMonitor,
             retentionMaintenanceService: retentionMaintenanceService,
             phaseFaultInjector: phaseFaultInjector,
-            workerStatus: _workerStatus);
+            workerStatus: _workerStatus,
+            bandRankHistoryOptions: bandRankHistoryOptions is null ? null : Options.Create(bandRankHistoryOptions));
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -3184,13 +3186,17 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunCleanupAsync_WithDatabasePressure_SkipsBandCleanupButRunsRankHistoryRetention()
+    public async Task RunCleanupAsync_WithDatabasePressure_SkipsLegacyBandCleanupButRunsRankHistoryRetention()
     {
         _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new DatabasePressureSnapshot(true, 1, 0, 0, 0, ["active vacuum count 1"])));
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            bandRankHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Background });
         var ctx = CreateContext();
 
-        await _sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
+        await sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
 
         await _databasePressureMonitor.Received(1)
             .GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>());
@@ -3211,6 +3217,29 @@ public class PostScrapeOrchestratorTests : IDisposable
                 outcome => outcome.Phase == "Cleanup.BandRankHistoryRetention").Status);
         var progress = _progress.GetProgressResponse();
         Assert.Equal(100, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task RunCleanupAsync_CompactDailyBandHistoryRunsUnderDatabasePressure()
+    {
+        _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new DatabasePressureSnapshot(true, 1, 0, 0, 0, ["active vacuum count 1"])));
+        var sut = CreateOrchestrator(
+            _cyclicalMachine,
+            _historyReconstructor,
+            bandRankHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.CompactDaily });
+        var ctx = CreateContext();
+
+        await sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
+
+        Assert.DoesNotContain(_log.Entries, entry =>
+            entry.Message.Contains("Skipping band rank history retention cleanup", StringComparison.Ordinal));
+        var outcome = Assert.Single(
+            ctx.PostScrapeOutcomes.Outcomes,
+            item => item.Phase == "Cleanup.BandRankHistoryRetention");
+        Assert.True(outcome.Success);
+        Assert.Equal("completed", outcome.Status);
+        Assert.Equal(100, _progress.GetProgressResponse().Current?.ProgressPercent);
     }
 
     [Fact]

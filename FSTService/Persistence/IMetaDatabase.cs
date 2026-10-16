@@ -481,6 +481,8 @@ public interface IMetaDatabase : IDisposable
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null, bool usePublishedSnapshot = false);
     BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted", bool usePublishedSnapshot = false);
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
+    BandRankHistoryDailyWriteResult WriteBandRankHistoryCompactDaily(string bandType, long scrapeId, DateOnly snapshotDate, int commandTimeoutSeconds = 0, CancellationToken ct = default);
+    BandRankHistoryPartitionRetentionResult DropExpiredBandRankHistoryPartitions(string bandType, DateOnly today, int retentionDays, CancellationToken ct = default);
     BandSongPerformancesResult GetPublishedBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     BandSongPerformanceExtremesResult GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5, BandSongPerformanceReadMode readMode = BandSongPerformanceReadMode.Published);
     (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0, string? comboId = null, bool requireCurrentProjection = false);

@@ -891,8 +891,13 @@ The same tables use `autovacuum_vacuum_scale_factor = 0.02` (since
 default 20%. With 30-day retention the live row count is flat, but the daily
 delete and same-day updates leave dead rows that only vacuum makes reusable.
 In the first day after the rewrite, with no vacuum yet, the tables grew from
-70.6 to 78.5 GB at a constant row count. The initializer sets both options
-together under the same guard.
+70.6 to 78.5 GB at a constant row count. After the change, autovacuum cleared
+all 10 tables within 41 minutes, and the next day's rows (scrape `1559`,
+2026-10-13) grew them by 0.1 GB. The initializer sets both options together
+under the same guard, waiting at most 2 seconds per table for its lock.
+
+That day's retention delete took 16.3 minutes (8.5 the day before; composite
+5.2 minutes against 2.4), still once a day and after publication.
 
 On 2026-10-11, the first day written with the new layout, the intra-day
 scrapes `1528` and `1529` updated 74 to 87% of history rows in place
@@ -925,7 +930,8 @@ parent and `ix_crh_retention_cutoff_brin` on composite) serve the delete's
 range scan. The schema initializer creates them only while the heap is under
 1 GiB and gives up after a 2 s lock wait; the rewrite tool creates them on
 production-sized tables.
-Band rank history has its own `BandRankHistory:RetentionDays`.
+Band rank history has its own `BandRankHistory:RetentionDays`; see
+[band rank history](#band-rank-history).
 
 The one-time reduction completed on 2026-10-11: the 10 tables went from
 390.8 GB to 70.6 GB. The dropped originals' archives were deleted at the
@@ -938,6 +944,41 @@ million rows (composite 4.61 million) in 8.5 minutes, one table at a time.
 The large solo tables took 22 to 79 seconds each and composite 2.4 minutes.
 This delays the next scrape's start once a day; the day's other scrapes
 skip the phase in milliseconds.
+
+### Band rank history
+
+The band page's rank chart reads `band_team_rank_history_points_v3_<type>`
+(`duets`, `trios`, `quad`) through `GET /api/rankings/bands/{bandType}/{teamKey}/history`.
+Each table is partitioned by `RANGE (snapshot_date)` and has a unique index on
+`(team_id, scope_id, combo_ref, snapshot_date)`. `scope_id` is `0` for overall
+and `1` for an instrument combo. Teams and combos are integer ids from the
+dictionaries `band_rank_history_team_v3_<type>` (`team_key`) and
+`band_rank_history_combo_v3_<type>` (`combo_id`). Points store ranks, ratings,
+`total_ranked_teams`, the publication's `computed_at` as `snapshot_taken_at`,
+and a 16-byte md5 `row_fingerprint`. `band_rank_history_compact_v3_state`
+holds each band type's readiness, date range, and estimated row count; the API
+reports history as `current` when its newest date equals the current ranking
+date.
+
+The monthly partitions `_202604` to `_202607` hold the v2 history compacted in
+July 2026 (2026-04-26 to 2026-07-05, 221 GB). With
+`BandRankHistory:Mode=CompactDaily`, the first post-publication cleanup after
+each UTC midnight writes partition `_d<yyyymmdd>` for every band type. It
+adds new teams and combos to the dictionaries, builds the table unattached
+from the published rankings (one point per ranking row, including combos),
+indexes it, and attaches it under a bound `CHECK`, together with the state
+row, so readers see the new date and its rows at once. A leftover unattached
+table from an interrupted build is dropped and rebuilt. The same cleanup drops
+every partition whose dates all fall before UTC today minus
+`BandRankHistory:RetentionDays`, which takes a brief exclusive lock on the
+parent with a 2-second lock timeout and retries. Timings are recorded in
+`scrape_phase_timings` as `Cleanup` / `band_rank_history.daily_write` and
+`band_rank_history.partition_retention` per band type.
+
+The v2 tables (`band_team_rank_history_points_v2`, `_latest_v2`,
+`_snapshot_v2`), `band_rank_history_jobs`, and the wide legacy history tables
+are only written in the `Inline` and `Background` modes. Production left them
+empty after the July compaction.
 
 ## Publication ownership
 

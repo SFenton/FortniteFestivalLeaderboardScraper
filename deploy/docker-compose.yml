@@ -208,7 +208,7 @@ services:
       - ImprovementNotifications__RefreshSoloProjection=${IMPROVEMENT_NOTIFICATIONS_REFRESH_SOLO_PROJECTION:-true}
       - ImprovementNotifications__RefreshAllSoloScopesWhenNoImpactedScopes=${IMPROVEMENT_NOTIFICATIONS_REFRESH_ALL_SOLO_SCOPES_WHEN_NO_IMPACTED_SCOPES:-false}
       # Queue band history as resumable background work instead of blocking ranking publish.
-      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Disabled}
+      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-CompactDaily}
       - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
       - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
       - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-true}

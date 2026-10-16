@@ -115,7 +115,7 @@ services:
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
       - Scraper__RankHistorySnapshotMaxDegreeOfParallelism=${RANK_HISTORY_SNAPSHOT_MAX_DOP:-1}
       - Scraper__WebRegistrationRetentionDays=${WEB_REGISTRATION_RETENTION_DAYS:-7}
-      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Disabled}
+      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-CompactDaily}
       - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
       - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
       - BandRankHistory__CompactV3DuetsReadEnabled=${BAND_RANK_HISTORY_COMPACT_V3_DUETS_READ_ENABLED:-true}

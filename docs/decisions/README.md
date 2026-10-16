@@ -27,6 +27,7 @@ update_triggers:
 | [0012](0012-sparse-snapshot-child-compaction.md) | Compact sparse snapshot children to their live scopes through verified archives |
 | [0013](0013-rank-history-30-day-retention.md) | Keep 30 days of rank history and reach it by copy-swap |
 | [0014](0014-snapshot-archive-24-hour-retention.md) | Delete snapshot archives 24 hours after retirement or compaction |
+| [0015](0015-compact-daily-band-rank-history.md) | Record band rank history as one compact partition per day |
 
 ADRs record rationale and consequences. Current behavior still belongs in the
 canonical architecture and component documents.
