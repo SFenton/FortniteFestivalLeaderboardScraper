@@ -280,6 +280,17 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   setting. The retirement timer's checkout is at the same commit and prunes
   snapshot archives after 24 hours; the 2026-10-12 backlog prune deleted
   2,781 archives (173.4 GiB), leaving 9.1 GiB.
+- Since the scrape `1621` boundary (2026-10-16 18:08Z) the worker and API run
+  bundle `f2d07f77` (#230; its service code equals master `b085c5d9`). The
+  production `.env` sets `BAND_RANK_HISTORY_MODE=CompactDaily` (applied by a
+  pre-worker hook that also recreated `fstservice`). For the canary the worker
+  env pinned `BandRankHistory__RetentionDays=365` to keep the frozen band
+  history. Since the scrape `1622` boundary it is `30`, equal to the default.
+  Scrape `1622` wrote the first daily partitions; scrape `1623` dropped the
+  frozen ones (see
+  [data storage: band rank history](../architecture/data-storage.md#band-rank-history)).
+  The rank-history rewrite archives (81.6 GB) were deleted on 2026-10-16 at
+  the operator's request.
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:

@@ -55,7 +55,9 @@ into the compact tables:
   midnight.
 - Every team gets a point every day, so charts have no gaps, and a team that
   has not changed still shows a flat line.
-- The frozen April–July compact partitions are older than 30 days, so the
-  first retention run with a 30-day window drops them (221 GB).
+- The frozen April–July compact partitions were older than 30 days, so the
+  first retention run with a 30-day window dropped them (scrape `1623`,
+  2026-10-16; the database went from 879 GB to 673 GB). Production's first
+  daily write took 2.9 minutes and 5.2 GB.
 - The v2 writer, its job tables, and the legacy row-delete retention remain
   for the `Inline` and `Background` modes only.

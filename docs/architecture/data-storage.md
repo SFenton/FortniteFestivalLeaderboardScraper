@@ -960,9 +960,11 @@ holds each band type's readiness, date range, and estimated row count; the API
 reports history as `current` when its newest date equals the current ranking
 date.
 
-The monthly partitions `_202604` to `_202607` hold the v2 history compacted in
-July 2026 (2026-04-26 to 2026-07-05, 221 GB). With
-`BandRankHistory:Mode=CompactDaily`, the first post-publication cleanup after
+The monthly partitions `_202604` to `_202607` held the v2 history compacted in
+July 2026 (2026-04-26 to 2026-07-05). The 30-day retention dropped them in
+scrape `1623`'s cleanup on 2026-10-16 (12 partitions, about 917 million rows,
+in 1.1 seconds). The database went from 879 GB to 673 GB, and no copy was
+kept. With `BandRankHistory:Mode=CompactDaily`, the first post-publication cleanup after
 each UTC midnight writes partition `_d<yyyymmdd>` for every band type. It
 adds new teams and combos to the dictionaries, builds the table unattached
 from the published rankings (one point per ranking row, including combos),
@@ -974,6 +976,12 @@ every partition whose dates all fall before UTC today minus
 parent with a 2-second lock timeout and retries. Timings are recorded in
 `scrape_phase_timings` as `Cleanup` / `band_rank_history.daily_write` and
 `band_rank_history.partition_retention` per band type.
+
+The first daily write (scrape `1622`, 2026-10-16) stored 4.79 million Duets,
+8.08 million Trios, and 8.82 million Quad points in 29, 68, and 77 seconds. It
+added 301,186, 452,635, and 390,448 teams to the dictionaries, attached each
+partition on the first attempt, and took 1.15, 1.94, and 2.12 GB: about 5.2 GB
+and under 3 minutes a day.
 
 The v2 tables (`band_team_rank_history_points_v2`, `_latest_v2`,
 `_snapshot_v2`), `band_rank_history_jobs`, and the wide legacy history tables
