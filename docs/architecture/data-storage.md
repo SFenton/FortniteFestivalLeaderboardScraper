@@ -933,8 +933,9 @@ production-sized tables.
 Band rank history has its own `BandRankHistory:RetentionDays`.
 
 The one-time reduction completed on 2026-10-11: the 10 tables went from
-390.8 GB to 70.6 GB, and the dropped originals are archived (81.5 GB) under
-`fst-data/archives/rank-history-retention/`. No rewrite step is pending.
+390.8 GB to 70.6 GB. The dropped originals' archives were deleted at the
+operator's request on 2026-10-16, so older rank history is gone. No rewrite
+step is pending.
 
 The first daily delete ran in scrape `1542`'s cleanup on 2026-10-12, after
 publication. It moved every scope's cutoff to 2026-09-12 and deleted 11.75

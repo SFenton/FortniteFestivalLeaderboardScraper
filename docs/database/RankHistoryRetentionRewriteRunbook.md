@@ -134,15 +134,17 @@ All 10 originals were archived during the fetch windows of scrapes `1540` and
 `1541` (81.5 GB in total, 16.3 GB for composite). Each archive's restored row
 count matched. They were dropped at 22:38Z, reclaiming 390.8 GB; the
 database went from 1,229 GB to 914 GB (15:45Z and 23:38Z samples, about
-eight hours apart), and the 10 tables held 70.6 GB at 23:55Z. The
-archives remain under `fst-data/archives/rank-history-retention/` and are
-never deleted automatically; only the operator removes them. Nothing in this
-procedure is pending; the daily worker retention maintains the window.
+eight hours apart), and the 10 tables held 70.6 GB at 23:55Z. At the
+operator's request the 10 archives (81.6 GB) were deleted on 2026-10-16;
+`manifest.json` still records each one with status `archive_deleted`. Rank
+history older than the 30-day window no longer exists anywhere. Nothing in
+this procedure is pending; the daily worker retention maintains the window.
 
 ## Rollback
 
-All 2026-10-11 originals are dropped, so only the archive restore below
-applies to them. Before `drop`, `rollback <table>` restores the original. It first gives the
+The 2026-10-11 originals and their archives are deleted, so that run cannot
+be rolled back. For a future run: before `drop`, `rollback <table>` restores
+the original. It first gives the
 detached original a validated bound `CHECK` and a BRIN index, with no effect on
 the live table. It then upserts the rows the replacement gained since the
 build day, swaps the names back, and deletes the scope's state row. The
