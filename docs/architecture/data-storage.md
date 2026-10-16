@@ -891,8 +891,13 @@ The same tables use `autovacuum_vacuum_scale_factor = 0.02` (since
 default 20%. With 30-day retention the live row count is flat, but the daily
 delete and same-day updates leave dead rows that only vacuum makes reusable.
 In the first day after the rewrite, with no vacuum yet, the tables grew from
-70.6 to 78.5 GB at a constant row count. The initializer sets both options
-together under the same guard.
+70.6 to 78.5 GB at a constant row count. After the change, autovacuum cleared
+all 10 tables within 41 minutes, and the next day's rows (scrape `1559`,
+2026-10-13) grew them by 0.1 GB. The initializer sets both options together
+under the same guard, waiting at most 2 seconds per table for its lock.
+
+That day's retention delete took 16.3 minutes (8.5 the day before; composite
+5.2 minutes against 2.4), still once a day and after publication.
 
 On 2026-10-11, the first day written with the new layout, the intra-day
 scrapes `1528` and `1529` updated 74 to 87% of history rows in place
