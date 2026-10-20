@@ -33,7 +33,8 @@ x-fst-worker-resources: &fst-worker-resources
   memswap_limit: ${FST_WORKER_MEMSWAP_LIMIT:-14g}
   cpus: ${FST_WORKER_CPUS:-6.0}
   cpu_shares: 512
-  pids_limit: 512
+  # One curl process per request at the configured DOP plus .NET threads.
+  pids_limit: ${FST_WORKER_PIDS_LIMIT:-2048}
 
 x-fst-web-resources: &fst-web-resources
   mem_limit: ${FST_WEB_MEM_LIMIT:-512m}

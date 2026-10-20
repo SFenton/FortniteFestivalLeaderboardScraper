@@ -423,6 +423,34 @@ issues or upload them, read the crash report first, analyze with
 `dotnet-dump analyze` on this host, and delete each dump once the crash is
 understood. The API role does not set these variables.
 
+### Worker process limit
+
+The worker starts one `curl` process for every Epic request, up to
+`PIA_DEGREE_OF_PARALLELISM` (300 in production) at once. Each counts against
+the container's cgroup `pids` limit, together with the .NET runtime's threads
+(about 290 during a band page fetch). With the old fixed `pids_limit: 512`
+the worker reached the limit during most leaderboard fetches. From 2026-10-17
+23:02Z to 2026-10-20 15:45Z the kernel refused 1,237 process or thread
+creations (`pids.events`).
+
+- `curl` failed to start ("Resource temporarily unavailable"). That left
+  scopes incomplete, and the completeness gate refused publication of scrapes
+  `1634` (58 scopes) and `1684` (2).
+- When the .NET thread pool could not add a thread it threw
+  `OutOfMemoryException` from `PortableThreadPool.CreateWorkerThread`, which
+  killed the worker mid-fetch in scrapes `1625` and `1642`. The worker's
+  memory was not exhausted (the scrape `1642` heap dump was 4.1 GB of 12 GiB).
+  The next worker abandoned the interrupted scrape at startup.
+
+The worker's resource anchor now reads
+`pids_limit: ${FST_WORKER_PIDS_LIMIT:-2048}` in both repository templates and
+in the production overlay `docker-compose.pia-30.yml` (applied at an idle
+boundary on 2026-10-20). Concurrency is still bounded by the degree of
+parallelism; the limit only keeps process and thread creation from failing.
+Raise `FST_WORKER_PIDS_LIMIT` with the degree of parallelism. Check
+`pids.peak` and `pids.events` in the worker's cgroup
+(`/sys/fs/cgroup/system.slice/docker-<id>.scope/`) after changing either.
+
 ## Networks and ports
 
 Templates bind API and web ports to localhost. Nginx communicates with

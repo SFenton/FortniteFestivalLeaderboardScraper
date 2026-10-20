@@ -534,8 +534,11 @@ in about 5% of periods, the same 3.2% HTML-only 429 rate, low PIA
 `AUTH_FAILED` counts, no adaptive DOP reductions, and unchanged public API
 latency. With the CPU limit lifted, the degree of parallelism and exit
 leases (four per exit under the baseline 800/32/4 profile) bind again, so
-further steps raise exits, degree of parallelism, and worker CPUs together;
-the guard accepts 30–80 canonical exits for that. Epic's JSON 429s can be
+further steps raise exits, degree of parallelism, worker CPUs, and the
+worker's process limit (`FST_WORKER_PIDS_LIMIT`, one curl process per
+in-flight request; see
+[deployment: worker process limit](deployment.md#worker-process-limit))
+together; the guard accepts 30–80 canonical exits for that. Epic's JSON 429s can be
 account-scoped, so each step is watched for non-HTML 429s and limiter
 reductions.
 
