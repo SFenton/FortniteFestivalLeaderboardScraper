@@ -20,6 +20,13 @@ x-fst-postgres-resources: &fst-postgres-resources
   memswap_limit: ${FST_POSTGRES_MEMSWAP_LIMIT:-20g}
   cpus: ${FST_POSTGRES_CPUS:-6.0}
   cpu_shares: 768
+  # Docker never rotates json-file logs by default; these grew by gigabytes a day.
+  logging:
+    driver: json-file
+    options:
+      max-size: ${FST_POSTGRES_LOG_MAX_SIZE:-256m}
+      max-file: "${FST_POSTGRES_LOG_MAX_FILE:-20}"
+      compress: "true"
 
 x-fst-api-resources: &fst-api-resources
   mem_limit: ${FST_API_MEM_LIMIT:-2g}
@@ -35,6 +42,13 @@ x-fst-worker-resources: &fst-worker-resources
   cpu_shares: 512
   # One curl process per request at the configured DOP plus .NET threads.
   pids_limit: ${FST_WORKER_PIDS_LIMIT:-2048}
+  # Docker never rotates json-file logs by default; these grew by gigabytes a day.
+  logging:
+    driver: json-file
+    options:
+      max-size: ${FST_WORKER_LOG_MAX_SIZE:-512m}
+      max-file: "${FST_WORKER_LOG_MAX_FILE:-20}"
+      compress: "true"
 
 x-fst-web-resources: &fst-web-resources
   mem_limit: ${FST_WEB_MEM_LIMIT:-512m}
