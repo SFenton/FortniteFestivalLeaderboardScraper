@@ -36,7 +36,7 @@ public static class LeaderboardSpoolWriterFactory
         {
             using var conn = db.DataSource.OpenConnection();
             if (scrapeId > 0)
-                EnsureSnapshotGenerationPartition(conn, scrapeId, activeInstrument);
+                EnsureSnapshotGenerationPartition(conn, scrapeId, activeInstrument, log);
 
             using var tx = conn.BeginTransaction();
             using (var sc = conn.CreateCommand())
@@ -198,7 +198,43 @@ public static class LeaderboardSpoolWriterFactory
         }
     }
 
+    internal const int SnapshotGenerationPartitionAttempts = 10;
+
+    /// <summary>
+    /// Creates the scrape's snapshot child for one instrument when missing.
+    /// <c>CREATE TABLE ... PARTITION OF</c> needs an exclusive lock on the
+    /// instrument parent, which a long concurrent snapshot query can hold for
+    /// tens of seconds; each attempt gives up after 2 s so readers never queue
+    /// behind it, and lock timeouts are retried with a growing pause (about a
+    /// minute in total) instead of failing the flush (scrape 1827).
+    /// </summary>
     internal static void EnsureSnapshotGenerationPartition(
+        Npgsql.NpgsqlConnection connection,
+        long snapshotId,
+        string instrument,
+        ILogger? log = null)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                EnsureSnapshotGenerationPartitionOnce(connection, snapshotId, instrument);
+                return;
+            }
+            catch (Npgsql.PostgresException ex) when (
+                ex.SqlState is Npgsql.PostgresErrorCodes.LockNotAvailable or Npgsql.PostgresErrorCodes.DeadlockDetected
+                && attempt < SnapshotGenerationPartitionAttempts)
+            {
+                var pause = TimeSpan.FromSeconds(Math.Min(10, attempt));
+                log?.LogWarning(
+                    "Snapshot partition for {Instrument} scrape {ScrapeId} is lock-contended (attempt {Attempt}/{MaxAttempts}); retrying in {Pause}.",
+                    instrument, snapshotId, attempt, SnapshotGenerationPartitionAttempts, pause);
+                Thread.Sleep(pause);
+            }
+        }
+    }
+
+    private static void EnsureSnapshotGenerationPartitionOnce(
         Npgsql.NpgsqlConnection connection,
         long snapshotId,
         string instrument)

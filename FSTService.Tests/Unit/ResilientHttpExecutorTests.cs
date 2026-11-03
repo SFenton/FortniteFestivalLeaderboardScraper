@@ -374,6 +374,38 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
     }
 
+    [Fact]
+    public async Task SendAsync_EdgeConflict409_RetriesToSuccessWithoutLimiterFailure()
+    {
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 10, minDop: 1, maxDop: 100,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueError(HttpStatusCode.Conflict, "<!doctype html><html></html>");
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(
+            () => MakeRequest(), limiter: limiter, maxRetries: 3, label: "409-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(10, limiter.CurrentDop);
+    }
+
+    [Fact]
+    public async Task SendAsync_409_ExhaustsRetries_ReturnsLastResponse()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueError(HttpStatusCode.Conflict, "c1");
+        handler.EnqueueError(HttpStatusCode.Conflict, "c2");
+
+        var response = await executor.SendAsync(
+            () => MakeRequest(), maxRetries: 1, label: "409-exhaust-test");
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
     // ─── 429 rate limit ─────────────────────────────────────────
 
     [Fact]

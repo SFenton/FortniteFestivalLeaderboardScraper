@@ -1501,7 +1501,12 @@ the resulting `FOR VALUES IN (snapshot_id)` bound. Concurrent batch writers
 acquire one global generation-DDL advisory transaction lock in a separate SQL
 statement before invoking the helper. The separate statement gives a waiter a
 fresh `READ COMMITTED` catalog snapshot, while the global key serializes child
-table and inherited-index naming across instruments. Before an instrument is
+table and inherited-index naming across instruments. Creating a child takes an
+exclusive lock on the instrument parent, so the helper call waits at most 2
+seconds for it. A long concurrent snapshot query can hold the parent longer
+(scrape `1827` lost a batch that way), so the worker retries lock timeouts
+and deadlocks up to 10 attempts with a growing pause, about a minute in
+total, before the flush fails. Before an instrument is
 migrated, the helper detects its regular-table layout and returns without
 mutation, so the same worker image is compatible across the rolling migration.
 The helper checks active `retention_in_flight` and `restore_in_flight` holds

@@ -1232,7 +1232,10 @@ public sealed class ResilientHttpExecutor
                     return res;
                 }
 
-                bool retryable = statusCode == 429 || statusCode >= 500;
+                // 409s from Epic's edge are HTML pages, not API answers (scrapes
+                // 1703, 1719, and 1913 each lost one page to a single 409), so
+                // they are transient like 5xx and retried on another exit.
+                bool retryable = statusCode == 429 || statusCode == 409 || statusCode >= 500;
                 // 500s are server-side errors (e.g. Epic's backend timeout on specific pages).
                 // They should NOT count toward the adaptive limiter's error rate because they
                 // don't indicate we're overloading the server — only 429 (rate limit) should.
