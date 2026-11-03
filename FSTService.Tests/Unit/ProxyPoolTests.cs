@@ -745,6 +745,31 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public async Task TargetEndpoints_LiveServerListLoopSurvivesAnHttpTimeout()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedFromPiaServerList = true;
+        var source = new RecordingServerListSource
+        {
+            Servers = [new(IPAddress.Parse("198.51.100.135"), "US Seattle")],
+            TimeoutsBeforeSuccess = 1,
+        };
+        using var pool = new ProxyPool(
+            options, _log, new RecordingRecycler(), new RecordingRegionRotator(), source)
+        {
+            PiaServerListStartupSpacing = TimeSpan.FromMilliseconds(50),
+        };
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        while (pool.KnownServerCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(25);
+
+        Assert.Equal(1, pool.KnownServerCount);
+        Assert.True(source.Calls >= 2);
+    }
+
+    [Fact]
     public async Task TargetEndpoints_FullCatalogEvictsOnlyARepeatedlyFailingServerForLiveListAddresses()
     {
         var options = CreatePiaRotationOptions();
@@ -910,10 +935,19 @@ public sealed class ProxyPoolTests
 
     private sealed class RecordingServerListSource : IPiaServerListSource
     {
+        private int _calls;
+
         public IReadOnlyList<PiaServerAddress> Servers { get; set; } = [];
+        public int TimeoutsBeforeSuccess { get; set; }
+        public int Calls => Volatile.Read(ref _calls);
 
         public Task<IReadOnlyList<PiaServerAddress>> FetchAsync(CancellationToken ct)
-            => Task.FromResult(Servers);
+        {
+            // HttpClient reports its own timeout as a cancellation the caller did not request.
+            if (Interlocked.Increment(ref _calls) <= TimeoutsBeforeSuccess)
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
+            return Task.FromResult(Servers);
+        }
     }
 
     [Fact]

@@ -1321,6 +1321,7 @@ internal sealed class ProxyPool :
     {
         try
         {
+            await Task.Delay(CensusInitialDelay, ct);
             int fetches = 0, windowFetches = 0, windowAdded = 0, windowFailures = 0;
             int consecutiveFailures = 0;
             while (!ct.IsCancellationRequested)
@@ -1330,8 +1331,9 @@ internal sealed class ProxyPool :
                     windowAdded += await SeedFromPiaServerListAsync(ct);
                     consecutiveFailures = 0;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
+                    // Includes HttpClient timeouts, which surface as cancellation.
                     windowFailures++;
                     if (consecutiveFailures++ % 20 == 0)
                     {
