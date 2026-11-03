@@ -1458,7 +1458,8 @@ public class GlobalLeaderboardScraper
                     continue;
                 }
 
-                if (statusCode == 403 || statusCode == 500)
+                // 409 is an edge error retried like 500 (see ResilientHttpExecutor).
+                if (statusCode is 403 or 409 or 500)
                 {
                     exhaustedStatus = statusCode == 403
                         ? FetchStatus.Forbidden
@@ -3100,7 +3101,8 @@ public class GlobalLeaderboardScraper
                     continue;
                 }
 
-                if (statusCode == 403 || statusCode == 500)
+                // 409 is an edge error retried like 500 (see ResilientHttpExecutor).
+                if (statusCode is 403 or 409 or 500)
                 {
                     exhaustedStatus = statusCode == 403
                         ? FetchStatus.Forbidden

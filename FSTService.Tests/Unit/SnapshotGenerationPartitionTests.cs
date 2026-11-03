@@ -407,6 +407,49 @@ public sealed class SnapshotGenerationPartitionTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureGenerationPartition_RetriesWhenTheParentIsBusyPastTheLockTimeout()
+    {
+        // A long reader of the instrument parent blocks CREATE TABLE ... PARTITION OF
+        // past its 2 s lock timeout; the ensure must retry instead of failing.
+        using var readerConnection = _fixture.DataSource.OpenConnection();
+        using var readerTransaction = readerConnection.BeginTransaction();
+        using (var read = readerConnection.CreateCommand())
+        {
+            read.Transaction = readerTransaction;
+            read.CommandText = "LOCK TABLE leaderboard_entries_snapshot_solo_bass IN ACCESS SHARE MODE";
+            read.ExecuteNonQuery();
+        }
+
+        var ensureTask = Task.Run(() =>
+        {
+            using var connection = _fixture.DataSource.OpenConnection();
+            LeaderboardSpoolWriterFactory.EnsureSnapshotGenerationPartition(
+                connection,
+                2301,
+                "Solo_Bass");
+        });
+
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        Assert.False(ensureTask.IsCompleted);
+
+        readerTransaction.Commit();
+        await ensureTask.WaitAsync(TimeSpan.FromSeconds(20));
+
+        using var verify = _fixture.DataSource.OpenConnection();
+        Assert.Equal(
+            "leaderboard_entries_snapshot_solo_bass_s2301",
+            Scalar<string>(
+                verify,
+                """
+                SELECT inhrelid::regclass::text
+                FROM pg_inherits
+                WHERE inhrelid =
+                    'public.leaderboard_entries_snapshot_solo_bass_s2301'
+                        ::regclass
+                """));
+    }
+
+    [Fact]
     public void DroppingGenerationChild_RemovesOnlyThatSnapshot()
     {
         using var connection = _fixture.DataSource.OpenConnection();

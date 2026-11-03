@@ -255,6 +255,12 @@ hundreds of thousands of pages, and the scope-completeness gate then fails
 the whole scrape (scrape `1438`: two pages, `incomplete=2`). JSON 429s and 5xx
 responses keep the original budget.
 
+HTTP 409 responses are retried like 5xx (same budget, routed to another exit,
+not counted by the adaptive limiter). Epic's edge returns them as HTML pages
+on rare leaderboard requests. Before this, a single 409 left its scope
+incomplete and the completeness gate refused scrapes `1703`, `1719`, and
+`1913`.
+
 #### Restoration and quarantine
 
 When every candidate fails or the overall deadline expires, the worker first
