@@ -1145,10 +1145,8 @@ public sealed class ResilientHttpExecutor
                                     RecordCdnBlock();
                                     fallbackResponse.Dispose();
                                 }
-                                else if ((int)fallbackResponse.StatusCode ==
-                                             429 ||
-                                         (int)fallbackResponse.StatusCode >=
-                                             500)
+                                else if ((int)fallbackResponse.StatusCode is
+                                             429 or 409 or >= 500)
                                 {
                                     res.Dispose();
                                     res = fallbackResponse;

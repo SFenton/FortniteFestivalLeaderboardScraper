@@ -1001,6 +1001,28 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_EpicCdn403_WhenCurlFallbackReturns409_RetriesInsteadOfReturningIt()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+        executor.CdnBlockFallbackOverride = (_, _, _) =>
+            Task.FromResult<HttpResponseMessage?>(
+                new HttpResponseMessage(HttpStatusCode.Conflict)
+                {
+                    Content = new StringContent("<!doctype html><html></html>"),
+                });
+
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            label: "fallback-409-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, executor.TotalHttpSends);
+    }
+
+    [Fact]
     public void CurlConfigIncludesTransferTimeResponseLimit()
     {
         using var request = MakeEpicEventsRequest();

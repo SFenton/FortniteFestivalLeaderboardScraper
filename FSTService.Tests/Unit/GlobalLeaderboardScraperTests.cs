@@ -1234,6 +1234,24 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
+    public async Task ScrapeLeaderboardAsync_Edge409sBeyondTheExecutorBudget_GetTheOuterRetryPass()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // More consecutive 409s than one executor pass allows; the outer page
+        // retry must try again rather than mark the page failed (scrape 1913).
+        for (var i = 0; i < 5; i++)
+            handler.EnqueueError(HttpStatusCode.Conflict, "<!doctype html><html></html>");
+        handler.EnqueueJsonOk(OnePage);
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct");
+
+        Assert.Equal(1, result.Entries.Count);
+        Assert.Equal(6, handler.Requests.Count);
+    }
+
+    [Fact]
     public async Task ScrapeLeaderboardAsync_500ThenSuccess_OnPageTwo()
     {
         var (scraper, handler) = CreateScraper();
