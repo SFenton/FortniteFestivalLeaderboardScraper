@@ -295,6 +295,15 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   bundle `968e0b65` (#234: Epic edge 409 retries and retries of a
   lock-contended snapshot partition creation; built on master `44679e8e`).
   `fst-postgres` was recreated at the same boundary with a rotated log.
+- Since the scrape `1916` boundary (2026-11-03 18:35Z) the worker and API run
+  bundle `74825eef` (#235, built on #234). The worker env enables `ProxyRegionRotationSeedFromPiaServerList` and
+  `ProxyRegionRotationPersistServerCatalog`, so the worker grows its PIA target
+  catalog from PIA's live list and keeps it in
+  `fst-data/pia-server-catalog.json` across restarts (see
+  [VPN proxy pool](vpn-proxy-pool.md)). Scrape `1917` fetched about 23,000 to
+  25,000 successful requests per minute and finished leaderboard and band
+  fetch in 33 minutes, against about 10,000 per minute and 63 minutes in
+  `1916`.
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:

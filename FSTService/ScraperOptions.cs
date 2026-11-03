@@ -314,6 +314,34 @@ public sealed class ScraperOptions
     public bool ProxyRegionRotationSeedServerCatalog { get; set; }
 
     /// <summary>
+    /// When true (with targeting), the worker also fetches PIA's public server
+    /// list from <see cref="ProxyRegionRotationPiaServerListUrl"/> directly
+    /// (20 times three seconds apart at startup, then every
+    /// <see cref="ProxyRegionRotationPiaServerListIntervalSeconds"/>) and adds
+    /// its qualified-region OpenVPN UDP addresses to the target catalog. Each
+    /// response names only a few random servers per region, and exits
+    /// recreated from one Gluetun image share one stale list, so container
+    /// lists alone can leave the catalog too small to rest its servers.
+    /// </summary>
+    public bool ProxyRegionRotationSeedFromPiaServerList { get; set; }
+
+    /// <summary>Absolute HTTPS URL of PIA's v7 server list.</summary>
+    public string ProxyRegionRotationPiaServerListUrl { get; set; } =
+        "https://serverlist.piaservers.net/vpninfo/servers/v7";
+
+    /// <summary>Seconds between live PIA server list fetches after startup (10-3600).</summary>
+    public int ProxyRegionRotationPiaServerListIntervalSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// When true (with targeting), the worker saves the target catalog (server
+    /// addresses and regions, last use, failed-pin backoff, and rate-limited
+    /// egress) to <c>pia-server-catalog.json</c> in
+    /// <see cref="DataDirectory"/> every minute and at shutdown, and loads it
+    /// at startup, so a restart keeps the catalog and its rest knowledge.
+    /// </summary>
+    public bool ProxyRegionRotationPersistServerCatalog { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;

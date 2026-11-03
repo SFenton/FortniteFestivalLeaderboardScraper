@@ -696,6 +696,261 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public void ParsePiaV7ServerList_ReadsOnlineUdpIpv4AddressesAndIgnoresTheSignature()
+    {
+        const string body = """
+            {"groups":{"ovpnudp":[{"name":"openvpn_udp","ports":[8080]}]},"regions":[
+              {"id":"us-newjersey","name":"US East","offline":false,"servers":{
+                "ovpnudp":[{"ip":"198.51.100.1","cn":"a"},{"ip":"2001:db8::1","cn":"b"},{"ip":"bad","cn":"c"}],
+                "meta":[{"ip":"198.51.100.9","cn":"a"}]}},
+              {"id":"nl","name":"Netherlands","servers":{"ovpnudp":[{"ip":"198.51.100.2","cn":"d"}]}},
+              {"id":"off","name":"CA Montreal","offline":true,"servers":{"ovpnudp":[{"ip":"198.51.100.3","cn":"e"}]}},
+              {"id":"tcp","name":"US Florida","servers":{"ovpntcp":[{"ip":"198.51.100.4","cn":"f"}]}},
+              {"id":"blank","name":"","servers":{"ovpnudp":[{"ip":"198.51.100.5","cn":"g"}]}}]}
+
+            c2lnbmF0dXJl
+            bm90IGpzb24=
+            """;
+
+        Assert.Equal(
+            [new(IPAddress.Parse("198.51.100.1"), "US East"), new(IPAddress.Parse("198.51.100.2"), "Netherlands")],
+            PiaServerListClient.Parse(System.Text.Encoding.UTF8.GetBytes(body)));
+        Assert.Empty(PiaServerListClient.Parse("{\"groups\":{}}"u8));
+    }
+
+    [Fact]
+    public async Task TargetEndpoints_LiveServerListAddsOnlyNewQualifiedServers()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedFromPiaServerList = true;
+        var source = new RecordingServerListSource();
+        using var pool = new ProxyPool(
+            options, _log, new RecordingRecycler(), new RecordingRegionRotator(), source);
+        var learned = IPAddress.Parse("198.51.100.130");
+        var listed = IPAddress.Parse("198.51.100.131");
+        pool.RecordKnownServer(learned, "US Seattle", DateTimeOffset.UtcNow - TimeSpan.FromHours(2));
+        source.Servers =
+        [
+            new(learned, "DE Frankfurt"),
+            new(listed, "de frankfurt"),
+            new(IPAddress.Parse("198.51.100.132"), "US Las Vegas"),
+        ];
+
+        Assert.Equal(1, await pool.SeedFromPiaServerListAsync(CancellationToken.None));
+        Assert.Equal(2, pool.KnownServerCount);
+        Assert.Equal(new ProxyEgressTarget(listed, "de frankfurt"), pool.TryReserveTarget(0, []));
+        Assert.Equal(new ProxyEgressTarget(learned, "US Seattle"), pool.TryReserveTarget(1, []));
+        Assert.Equal(0, await pool.SeedFromPiaServerListAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TargetEndpoints_LiveServerListLoopSurvivesAnHttpTimeout()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedFromPiaServerList = true;
+        var source = new RecordingServerListSource
+        {
+            Servers = [new(IPAddress.Parse("198.51.100.135"), "US Seattle")],
+            TimeoutsBeforeSuccess = 1,
+        };
+        using var pool = new ProxyPool(
+            options, _log, new RecordingRecycler(), new RecordingRegionRotator(), source)
+        {
+            PiaServerListStartupSpacing = TimeSpan.FromMilliseconds(50),
+        };
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        while (pool.KnownServerCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(25);
+
+        Assert.Equal(1, pool.KnownServerCount);
+        Assert.True(source.Calls >= 2);
+    }
+
+    [Fact]
+    public async Task TargetEndpoints_FullCatalogEvictsOnlyARepeatedlyFailingServerForLiveListAddresses()
+    {
+        var options = CreatePiaRotationOptions();
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationSeedFromPiaServerList = true;
+        var source = new RecordingServerListSource();
+        using var pool = new ProxyPool(
+            options, _log, new RecordingRecycler(), new RecordingRegionRotator(), source)
+        {
+            MaxKnownServers = 2,
+        };
+        var dead = IPAddress.Parse("198.51.100.140");
+        var healthy = IPAddress.Parse("198.51.100.141");
+        pool.RecordKnownServer(dead, "US Seattle");
+        pool.RecordKnownServer(healthy, "US Seattle");
+        source.Servers = [new(IPAddress.Parse("198.51.100.142"), "US Seattle")];
+
+        Assert.Equal(0, await pool.SeedFromPiaServerListAsync(CancellationToken.None));
+        for (var failure = 0; failure < 3; failure++)
+            pool.ReportTargetFailed(0, dead);
+
+        Assert.Equal(1, await pool.SeedFromPiaServerListAsync(CancellationToken.None));
+        Assert.Equal(2, pool.KnownServerCount);
+        Assert.Equal(healthy, pool.TryReserveTarget(0, [IPAddress.Parse("198.51.100.142")])?.Address);
+        Assert.Equal(
+            IPAddress.Parse("198.51.100.142"),
+            pool.TryReserveTarget(1, [healthy])?.Address);
+    }
+
+    [Fact]
+    public async Task TargetEndpoints_PersistedCatalogRestoresUseBackoffAndRateLimitsAfterRestart()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "fst-pia-catalog-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var options = CreatePersistentCatalogOptions(directory);
+            options.ProxyRegionRotationRateLimitThreshold = 1;
+            options.ProxyRegionRotationBurnedEgressTtlSeconds = 600;
+            var now = DateTimeOffset.UtcNow;
+            var rested = IPAddress.Parse("198.51.100.150");
+            var recent = IPAddress.Parse("198.51.100.151");
+            var failing = IPAddress.Parse("198.51.100.152");
+            var burned = IPAddress.Parse("198.51.100.153");
+            var rotator = new RecordingRegionRotator
+            {
+                Egress = uri => uri.Host == "gluetun-1" ? burned : null,
+            };
+            using (var first = new ProxyPool(options, _log, new RecordingRecycler(), rotator))
+            {
+                first.RecordKnownServer(rested, "US Seattle", now - TimeSpan.FromHours(3));
+                first.RecordKnownServer(recent, "DE Frankfurt", now - TimeSpan.FromMinutes(1));
+                first.RecordKnownServer(failing, "US Seattle", now - TimeSpan.FromHours(4));
+                first.ReportTargetFailed(0, failing);
+                using var request = RequestFor(0, "gluetun-1");
+                first.ReportRateLimited(request, null);
+                await rotator.Started.WaitAsync(TimeSpan.FromSeconds(2));
+                rotator.Complete(ProxyRegionRotationOutcome.Rotated);
+                await rotator.Finished.WaitAsync(TimeSpan.FromSeconds(2));
+                first.RecordKnownServer(burned, "US Seattle", now - TimeSpan.FromHours(5));
+                Assert.True(first.TrySaveServerCatalog());
+            }
+            Assert.True(File.Exists(Path.Combine(directory, ProxyPool.ServerCatalogFileName)));
+
+            using var second = new ProxyPool(
+                options, _log, new RecordingRecycler(), new RecordingRegionRotator());
+
+            Assert.Equal(4, second.KnownServerCount);
+            Assert.Equal(rested, second.TryReserveTarget(0, [])?.Address);
+            Assert.Equal(recent, second.TryReserveTarget(1, [rested])?.Address);
+            Assert.Null(second.TryReserveTarget(1, [rested, recent]));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TargetEndpoints_PersistedCatalogSkipsBadEntriesAndSurvivesACorruptFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "fst-pia-catalog-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, ProxyPool.ServerCatalogFileName);
+            var options = CreatePersistentCatalogOptions(directory);
+            File.WriteAllText(path, """
+                {"version":1,"savedAt":"2026-11-03T00:00:00Z","servers":[
+                  {"address":"198.51.100.160","region":"US Seattle","lastUsedAt":"2099-01-01T00:00:00Z","failedUntil":"0001-01-01T00:00:00Z","failures":0},
+                  {"address":"198.51.100.161","region":"US Las Vegas","failures":0},
+                  {"address":"2001:db8::1","region":"US Seattle","failures":0},
+                  {"address":"nope","region":"US Seattle","failures":0},
+                  null],
+                 "rateLimited":[{"address":"198.51.100.170","at":"2000-01-01T00:00:00Z"}]}
+                """);
+            using (var pool = new ProxyPool(
+                options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            {
+                Assert.Equal(1, pool.KnownServerCount);
+                // A future last-use time is clamped to now, so it cannot block the server forever.
+                Assert.Equal(IPAddress.Parse("198.51.100.160"), pool.TryReserveTarget(0, [])?.Address);
+            }
+
+            File.WriteAllText(path, "{not json");
+            using (var pool = new ProxyPool(
+                options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+                Assert.Equal(0, pool.KnownServerCount);
+
+            File.WriteAllText(path, """{"version":2,"servers":[{"address":"198.51.100.162","region":"US Seattle"}]}""");
+            using (var pool = new ProxyPool(
+                options, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+                Assert.Equal(0, pool.KnownServerCount);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TargetEndpoints_LiveListAndPersistenceRequireTargetingAndValidSettings()
+    {
+        var persistWithoutTargeting = CreatePiaRotationOptions();
+        persistWithoutTargeting.ProxyRegionRotationPersistServerCatalog = true;
+        Assert.Contains("persisted PIA server catalog", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(persistWithoutTargeting, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+
+        var liveWithoutTargeting = CreatePiaRotationOptions();
+        liveWithoutTargeting.ProxyRegionRotationSeedFromPiaServerList = true;
+        Assert.Contains("Live PIA server list seeding", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(liveWithoutTargeting, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+
+        var badInterval = CreatePiaRotationOptions();
+        badInterval.ProxyRegionRotationTargetEndpoints = true;
+        badInterval.ProxyRegionRotationSeedFromPiaServerList = true;
+        badInterval.ProxyRegionRotationPiaServerListIntervalSeconds = 5;
+        Assert.Contains("10-3600 second interval", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(badInterval, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+
+        var plainHttp = CreatePiaRotationOptions();
+        plainHttp.ProxyRegionRotationTargetEndpoints = true;
+        plainHttp.ProxyRegionRotationSeedFromPiaServerList = true;
+        plainHttp.ProxyRegionRotationPiaServerListUrl = "http://serverlist.example/v7";
+        Assert.Contains("absolute HTTPS", Assert.Throws<InvalidOperationException>(
+            () => new ProxyPool(plainHttp, _log, new RecordingRecycler(), new RecordingRegionRotator()))
+            .Message);
+    }
+
+    private static ScraperOptions CreatePersistentCatalogOptions(string directory)
+    {
+        var options = CreatePiaRotationOptions();
+        options.DataDirectory = directory;
+        options.ProxyCurlTempDirectory = Path.Combine(directory, "curl-region-test");
+        options.ProxyRegionRotationTargetEndpoints = true;
+        options.ProxyRegionRotationPersistServerCatalog = true;
+        return options;
+    }
+
+    private sealed class RecordingServerListSource : IPiaServerListSource
+    {
+        private int _calls;
+
+        public IReadOnlyList<PiaServerAddress> Servers { get; set; } = [];
+        public int TimeoutsBeforeSuccess { get; set; }
+        public int Calls => Volatile.Read(ref _calls);
+
+        public Task<IReadOnlyList<PiaServerAddress>> FetchAsync(CancellationToken ct)
+        {
+            // HttpClient reports its own timeout as a cancellation the caller did not request.
+            if (Interlocked.Increment(ref _calls) <= TimeoutsBeforeSuccess)
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
+            return Task.FromResult(Servers);
+        }
+    }
+
+    [Fact]
     public async Task TargetEndpoints_RotationRequestsTargetingAndLearnsVerifiedServer()
     {
         var options = CreatePiaRotationOptions();
