@@ -451,6 +451,30 @@ Raise `FST_WORKER_PIDS_LIMIT` with the degree of parallelism. Check
 `pids.peak` and `pids.events` in the worker's cgroup
 (`/sys/fs/cgroup/system.slice/docker-<id>.scope/`) after changing either.
 
+### Container log rotation
+
+Docker's daemon on this host sets no log options, so every container's
+`json-file` log grows without limit under the Docker data-root
+(`/mnt/storage/docker-data`, a shared drive outside the FST drive). By
+2026-11-02 the worker's log was 53 GB after 13 days (about 4 GB a day, mostly
+per-request debug lines) and `fst-postgres`'s was 33 GB after three weeks
+(slow-query plans), with the drive 96% full (73 GB free). The repository
+templates now give the worker and PostgreSQL resource anchors a rotated,
+compressed `json-file` log:
+
+| Service | Size per file | Files | Override |
+|---|---:|---:|---|
+| Worker | 512m | 20 | `FST_WORKER_LOG_MAX_SIZE`, `FST_WORKER_LOG_MAX_FILE` |
+| PostgreSQL | 256m | 20 | `FST_POSTGRES_LOG_MAX_SIZE`, `FST_POSTGRES_LOG_MAX_FILE` |
+
+Rotated files are compressed, so the worker keeps roughly two days of
+`docker logs` history. Log options apply only when a container is created:
+recreating it starts a new log and deletes the old one. The production
+overlay's worker anchor got the same options at an idle boundary on
+2026-11-02. PostgreSQL's options take effect at its next recreate, which
+restarts the database, so that is scheduled separately. Per-scrape worker logs
+that the boundary scripts save under `fst-data/evidence/` are unaffected.
+
 ## Networks and ports
 
 Templates bind API and web ports to localhost. Nginx communicates with
