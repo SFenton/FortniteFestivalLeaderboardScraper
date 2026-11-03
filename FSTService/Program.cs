@@ -344,6 +344,11 @@ if (hostedWorkerMode == HostedWorkerMode.FullWorker)
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { UseProxy = false });
     builder.Services.AddSingleton<IProxyEgressProbe, CurlProxyEgressProbe>();
     builder.Services.AddSingleton<IProxyRegionRotator, PiaRegionRotator>();
+    // PIA's public server list is fetched directly, never through an exit.
+    builder.Services.AddHttpClient(nameof(PiaServerListClient))
+        .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(20))
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { UseProxy = false });
+    builder.Services.AddSingleton<IPiaServerListSource, PiaServerListClient>();
 }
 builder.Services.AddSingleton<ProxyPool>();
 builder.Services.AddSingleton<IProxyHealthReporter>(sp => sp.GetRequiredService<ProxyPool>());

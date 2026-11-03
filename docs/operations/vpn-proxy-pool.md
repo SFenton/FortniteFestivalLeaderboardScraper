@@ -10,6 +10,7 @@ sources:
   - FSTService/Scraping/PiaRegionRotator.cs
   - FSTService/Scraping/ResilientHttpExecutor.cs
   - FSTService/Scraping/GluetunContainerRecycler.cs
+  - FSTService/Scraping/PiaServerListClient.cs
   - deploy/docker-compose.yml
   - tools/fst-worker-compose-guard.sh
   - tools/fst-worker-compose-guard.test.mjs
@@ -239,6 +240,37 @@ restorations, or quarantines, about 36 of 50 exits selectable, and HTTP 429s
 at 3.2%. Seeded scrape `1470` logged about 1,400 retried curl
 `wrong version number` (TLS) errors through its exits, against about 300 per
 learned-catalog scrape; none exhausted a retry budget.
+
+The container lists differ only while each exit's Gluetun updater has
+refreshed its own copy. Exits recreated from one image share that image's
+list, and the updater cannot then repair it: on 2026-11-03 it timed out
+fetching PIA's list through the tunnel. That day all 75 exits were recreated
+from the 2026-10-29 image, whose PIA list (dated 2026-08-06) holds 658
+qualified addresses. The running worker kept its 4,436-server catalog, and
+scrape `1915` finished leaderboard fetch in 33 minutes. The next worker
+start (scrape `1916`) could seed only those 658: about 75 were rested,
+refresh candidates were rejected as rate-limited (1,741) or peer-held
+(2,071) against 3 and 0 in `1915`, and successful requests per minute fell
+from about 20,000 to about 10,000.
+
+Two settings remove that dependence on the containers:
+
+- `ProxyRegionRotationSeedFromPiaServerList` fetches PIA's public v7 server
+  list directly from the worker (not through an exit): 20 times three seconds
+  apart at startup, then every `ProxyRegionRotationPiaServerListIntervalSeconds`.
+  It adds new OpenVPN UDP addresses of online qualified regions. Each response
+  names only three random servers per region: 40 fetches found 340 qualified
+  addresses, only 47 of them in the image list. When the catalog is full
+  (8,192 addresses), a new address replaces the server with the most
+  consecutive failed pins, and only after at least three.
+- `ProxyRegionRotationPersistServerCatalog` saves the catalog (address, region,
+  last use, failed-pin backoff) and the unexpired rate-limited egress to
+  `pia-server-catalog.json` in the data directory every minute and at
+  shutdown, and loads it at startup. A restart then keeps its rest and
+  rate-limit knowledge instead of re-learning it during the next scrape.
+  Malformed entries, non-IPv4 addresses, and unqualified regions are skipped,
+  future timestamps are clamped, and an unreadable file starts an empty
+  catalog.
 
 A rotated exit is immediately selectable (its old cooldown belonged to the
 spent egress); an explicit `Retry-After` is still honored. While refresh is

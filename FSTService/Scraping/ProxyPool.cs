@@ -98,9 +98,23 @@ internal sealed class ProxyPool :
     private readonly TimeSpan _targetMinRest;
     private readonly bool _seedServerCatalog;
     internal TimeSpan CatalogSeedInterval { get; set; } = TimeSpan.FromHours(1);
+    private readonly IPiaServerListSource? _serverListSource;
+    private readonly bool _seedFromPiaServerList;
+    private readonly TimeSpan _piaServerListInterval;
+    internal TimeSpan PiaServerListStartupSpacing { get; set; } = TimeSpan.FromSeconds(3);
+    private const int PiaServerListStartupFetches = 20;
+    private const int PiaServerListLogEvery = 120;
+    private readonly string? _catalogPath;
+    private readonly object _catalogFileLock = new();
+    internal TimeSpan CatalogSaveInterval { get; set; } = TimeSpan.FromMinutes(1);
+    internal const string ServerCatalogFileName = "pia-server-catalog.json";
+    private static readonly System.Text.Json.JsonSerializerOptions CatalogJson =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
     private readonly HashSet<string> _qualifiedRegions;
     private readonly Dictionary<IPAddress, KnownServer> _knownServers = new();
-    private const int MaxKnownServers = 8192;
+    internal int MaxKnownServers { get; set; } = 8192;
+    /// <summary>A full catalog evicts its worst server only after this many consecutive failed pins.</summary>
+    private const int EvictableTargetFailures = 3;
     private static readonly TimeSpan TargetFailureBackoff = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MaxTargetFailureBackoff = TimeSpan.FromHours(6);
     private readonly SemaphoreSlim _regionRotationGate;
@@ -125,8 +139,9 @@ internal sealed class ProxyPool :
         IOptions<ScraperOptions> options,
         ILogger<ProxyPool> log,
         IProxyContainerRecycler containerRecycler,
-        IProxyRegionRotator? regionRotator = null)
-        : this(options.Value, log, containerRecycler, regionRotator)
+        IProxyRegionRotator? regionRotator = null,
+        IPiaServerListSource? serverListSource = null)
+        : this(options.Value, log, containerRecycler, regionRotator, serverListSource)
     {
     }
 
@@ -134,7 +149,8 @@ internal sealed class ProxyPool :
         ScraperOptions options,
         ILogger<ProxyPool> log,
         IProxyContainerRecycler? containerRecycler = null,
-        IProxyRegionRotator? regionRotator = null)
+        IProxyRegionRotator? regionRotator = null,
+        IPiaServerListSource? serverListSource = null)
     {
         ValidateExpectedConfiguration(options);
         if (options.ProxyRegionRotationEnabled && regionRotator is null)
@@ -179,6 +195,14 @@ internal sealed class ProxyPool :
             && options.ProxyRegionRotationTargetEndpoints;
         _seedServerCatalog = _targetEndpoints
             && options.ProxyRegionRotationSeedServerCatalog;
+        _serverListSource = serverListSource;
+        _seedFromPiaServerList = _targetEndpoints
+            && options.ProxyRegionRotationSeedFromPiaServerList;
+        _piaServerListInterval = TimeSpan.FromSeconds(
+            Math.Max(10, options.ProxyRegionRotationPiaServerListIntervalSeconds));
+        _catalogPath = _targetEndpoints && options.ProxyRegionRotationPersistServerCatalog
+            ? Path.Combine(options.DataDirectory, ServerCatalogFileName)
+            : null;
         _targetMinRest = TimeSpan.FromSeconds(
             Math.Max(0, options.ProxyRegionRotationTargetMinRestSeconds));
         _qualifiedRegions = new HashSet<string>(
@@ -238,9 +262,21 @@ internal sealed class ProxyPool :
                     _regionRotationMinInterval.TotalSeconds,
                     _regionRotationGlobalInterval.TotalSeconds,
                     _burnedEgressTtl.TotalSeconds);
+                if (_catalogPath is not null)
+                    LoadServerCatalog();
                 _ = Task.Run(() => EgressCensusLoopAsync(_regionRotationCancellation.Token));
+                if (_catalogPath is not null)
+                    _ = Task.Run(() => ServerCatalogSaveLoopAsync(_regionRotationCancellation.Token));
                 if (_seedServerCatalog && _containerRecycler is not null)
                     _ = Task.Run(() => ServerCatalogSeedLoopAsync(_regionRotationCancellation.Token));
+                if (_seedFromPiaServerList)
+                {
+                    if (_serverListSource is null)
+                        _log.LogWarning(
+                            "Live PIA server list seeding is enabled, but this host role has no server list client.");
+                    else
+                        _ = Task.Run(() => PiaServerListSeedLoopAsync(_regionRotationCancellation.Token));
+                }
             }
 
             _summaryTimer = new Timer(
@@ -1167,18 +1203,8 @@ internal sealed class ProxyPool :
                     endpoint.AvailableRegions = regions;
                 foreach (var server in servers)
                 {
-                    if (!_qualifiedRegions.Contains(server.Region)
-                        || _knownServers.ContainsKey(server.Address)
-                        || _knownServers.Count >= MaxKnownServers)
-                        continue;
-                    _knownServers[server.Address] = new KnownServer
-                    {
-                        Region = server.Region,
-                        LastUsedAt = _rateLimitedEgress.TryGetValue(server.Address, out var limitedAt)
-                            ? limitedAt
-                            : default,
-                    };
-                    added++;
+                    if (TryAddSeededServerLocked(server, evictWhenFull: false))
+                        added++;
                 }
             }
         }
@@ -1225,9 +1251,280 @@ internal sealed class ProxyPool :
     }
 
     /// <summary>
-    /// Qualified regions this exit's own server list contains (all qualified
-    /// regions while the list is unknown).
+    /// Adds a listed server the catalog does not know yet. With
+    /// <paramref name="evictWhenFull"/>, a full catalog first evicts its
+    /// server with the most consecutive failed pins (at least
+    /// <see cref="EvictableTargetFailures"/>), the oldest-used one on ties.
     /// </summary>
+    private bool TryAddSeededServerLocked(PiaServerAddress server, bool evictWhenFull)
+    {
+        if (!_qualifiedRegions.Contains(server.Region)
+            || _knownServers.ContainsKey(server.Address))
+            return false;
+        if (_knownServers.Count >= MaxKnownServers)
+        {
+            if (!evictWhenFull)
+                return false;
+            IPAddress? worstAddress = null;
+            KnownServer? worst = null;
+            foreach (var (address, known) in _knownServers)
+            {
+                if (known.Failures < EvictableTargetFailures)
+                    continue;
+                if (worst is null
+                    || known.Failures > worst.Failures
+                    || (known.Failures == worst.Failures && known.LastUsedAt < worst.LastUsedAt))
+                {
+                    worst = known;
+                    worstAddress = address;
+                }
+            }
+            if (worstAddress is null)
+                return false;
+            _knownServers.Remove(worstAddress);
+        }
+        _knownServers[server.Address] = new KnownServer
+        {
+            Region = server.Region,
+            LastUsedAt = _rateLimitedEgress.TryGetValue(server.Address, out var limitedAt)
+                ? limitedAt
+                : default,
+        };
+        return true;
+    }
+
+    /// <summary>
+    /// Fetches PIA's live server list once and adds its qualified-region
+    /// addresses the catalog does not know yet. Learned entries keep their
+    /// state.
+    /// </summary>
+    internal async Task<int> SeedFromPiaServerListAsync(CancellationToken ct)
+    {
+        if (!_seedFromPiaServerList || _serverListSource is null)
+            return 0;
+        var servers = await _serverListSource.FetchAsync(ct);
+        int added = 0;
+        lock (_lock)
+        {
+            if (_disposed)
+                return 0;
+            foreach (var server in servers)
+            {
+                if (TryAddSeededServerLocked(server, evictWhenFull: true))
+                    added++;
+            }
+        }
+        return added;
+    }
+
+    private async Task PiaServerListSeedLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            int fetches = 0, windowFetches = 0, windowAdded = 0, windowFailures = 0;
+            int consecutiveFailures = 0;
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    windowAdded += await SeedFromPiaServerListAsync(ct);
+                    consecutiveFailures = 0;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    windowFailures++;
+                    if (consecutiveFailures++ % 20 == 0)
+                    {
+                        _log.LogWarning(
+                            "Live PIA server list fetch failed ({Failures} in a row): {Reason}",
+                            consecutiveFailures, ex.GetType().Name);
+                    }
+                }
+                fetches++;
+                windowFetches++;
+                if (fetches == PiaServerListStartupFetches || windowFetches >= PiaServerListLogEvery)
+                {
+                    int known;
+                    lock (_lock)
+                        known = _knownServers.Count;
+                    _log.LogInformation(
+                        "Seeded the PIA server catalog from {Fetches} live server list fetch(es) ({Failures} failed): {Added} new qualified address(es), {Known} known.",
+                        windowFetches, windowFailures, windowAdded, known);
+                    windowFetches = windowAdded = windowFailures = 0;
+                }
+                await Task.Delay(
+                    fetches < PiaServerListStartupFetches ? PiaServerListStartupSpacing : _piaServerListInterval,
+                    ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task ServerCatalogSaveLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(CatalogSaveInterval, ct);
+                TrySaveServerCatalog();
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Atomically writes the catalog and unexpired rate-limited egress to
+    /// <see cref="ServerCatalogFileName"/>; failures are logged, not thrown.
+    /// </summary>
+    internal bool TrySaveServerCatalog()
+    {
+        if (_catalogPath is null)
+            return false;
+        SavedServerCatalog snapshot;
+        lock (_lock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            snapshot = new SavedServerCatalog(
+                1,
+                now,
+                _knownServers
+                    .Select(pair => (SavedKnownServer?)new SavedKnownServer(
+                        pair.Key.ToString(),
+                        pair.Value.Region,
+                        pair.Value.LastUsedAt,
+                        pair.Value.FailedUntil,
+                        pair.Value.Failures))
+                    .ToList(),
+                _rateLimitedEgress
+                    .Where(pair => now - pair.Value < _burnedEgressTtl)
+                    .Select(pair => (SavedRateLimitedEgress?)new SavedRateLimitedEgress(pair.Key.ToString(), pair.Value))
+                    .ToList());
+        }
+
+        try
+        {
+            lock (_catalogFileLock)
+            {
+                var directory = Path.GetDirectoryName(Path.GetFullPath(_catalogPath));
+                if (!string.IsNullOrEmpty(directory))
+                    Directory.CreateDirectory(directory);
+                var temporary = _catalogPath + ".tmp";
+                using (var stream = File.Create(temporary))
+                    System.Text.Json.JsonSerializer.Serialize(stream, snapshot, CatalogJson);
+                File.Move(temporary, _catalogPath, overwrite: true);
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.LogWarning("Saving the PIA server catalog failed: {Reason}", ex.GetType().Name);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Loads a saved catalog: qualified-region IPv4 servers with their use
+    /// time and pin backoff, and rate-limited egress still inside its window.
+    /// Malformed entries are skipped; an unreadable file starts empty.
+    /// </summary>
+    internal int LoadServerCatalog()
+    {
+        if (_catalogPath is null || !File.Exists(_catalogPath))
+            return 0;
+        SavedServerCatalog? saved;
+        try
+        {
+            lock (_catalogFileLock)
+            {
+                using var stream = File.OpenRead(_catalogPath);
+                saved = System.Text.Json.JsonSerializer.Deserialize<SavedServerCatalog>(stream, CatalogJson);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or System.Text.Json.JsonException)
+        {
+            _log.LogWarning("Loading the saved PIA server catalog failed: {Reason}", ex.GetType().Name);
+            return 0;
+        }
+        if (saved is not { Version: 1 })
+        {
+            _log.LogWarning("Ignoring a saved PIA server catalog with an unknown format.");
+            return 0;
+        }
+
+        int loaded = 0, limited = 0;
+        lock (_lock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var server in saved.Servers ?? [])
+            {
+                if (server is null
+                    || !TryParseIpv4(server.Address, out var address)
+                    || string.IsNullOrWhiteSpace(server.Region)
+                    || !_qualifiedRegions.Contains(server.Region)
+                    || _knownServers.ContainsKey(address)
+                    || _knownServers.Count >= MaxKnownServers)
+                    continue;
+                _knownServers[address] = new KnownServer
+                {
+                    Region = server.Region,
+                    LastUsedAt = server.LastUsedAt > now ? now : server.LastUsedAt,
+                    FailedUntil = server.FailedUntil > now + MaxTargetFailureBackoff
+                        ? now + MaxTargetFailureBackoff
+                        : server.FailedUntil,
+                    Failures = Math.Clamp(server.Failures, 0, 64),
+                };
+                loaded++;
+            }
+            foreach (var egress in saved.RateLimited ?? [])
+            {
+                if (egress is null || !TryParseIpv4(egress.Address, out var address))
+                    continue;
+                var at = egress.At > now ? now : egress.At;
+                if (now - at >= _burnedEgressTtl
+                    || (_rateLimitedEgress.TryGetValue(address, out var known) && known >= at))
+                    continue;
+                _rateLimitedEgress[address] = at;
+                limited++;
+            }
+        }
+        _log.LogInformation(
+            "Loaded {Servers} PIA server(s) and {RateLimited} rate-limited egress address(es) from the catalog saved at {SavedAt:O}.",
+            loaded, limited, saved.SavedAt);
+        return loaded;
+    }
+
+    private static bool TryParseIpv4(string? value, out IPAddress address)
+    {
+        if (IPAddress.TryParse(value, out var parsed)
+            && parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            address = parsed;
+            return true;
+        }
+        address = IPAddress.None;
+        return false;
+    }
+
+    private sealed record SavedServerCatalog(
+        int Version,
+        DateTimeOffset SavedAt,
+        List<SavedKnownServer?>? Servers,
+        List<SavedRateLimitedEgress?>? RateLimited);
+
+    private sealed record SavedKnownServer(
+        string? Address,
+        string? Region,
+        DateTimeOffset LastUsedAt,
+        DateTimeOffset FailedUntil,
+        int Failures);
+
+    private sealed record SavedRateLimitedEgress(string? Address, DateTimeOffset At);
     private IReadOnlyList<string> RotationRegionsFor(ProxyEndpoint endpoint)
         => endpoint.AvailableRegions is { } available
             ? _regionRotationRegions.Where(available.Contains).ToList()
@@ -1741,6 +2038,21 @@ internal sealed class ProxyPool :
             throw new InvalidOperationException(
                 "Seeding the PIA server catalog requires targeted egress refresh.");
         }
+        if ((options.ProxyRegionRotationSeedFromPiaServerList
+                || options.ProxyRegionRotationPersistServerCatalog)
+            && !options.ProxyRegionRotationTargetEndpoints)
+        {
+            throw new InvalidOperationException(
+                "Live PIA server list seeding and a persisted PIA server catalog require targeted egress refresh.");
+        }
+        if (options.ProxyRegionRotationSeedFromPiaServerList
+            && (options.ProxyRegionRotationPiaServerListIntervalSeconds is < 10 or > 3_600
+                || !Uri.TryCreate(options.ProxyRegionRotationPiaServerListUrl, UriKind.Absolute, out var listUrl)
+                || listUrl.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException(
+                "Live PIA server list seeding requires an absolute HTTPS list URL and a 10-3600 second interval.");
+        }
         if (options.ProxyRegionRotationTargetMinRestSeconds is < 0 or > 3_600)
         {
             throw new InvalidOperationException(
@@ -1835,6 +2147,7 @@ internal sealed class ProxyPool :
             foreach (var endpoint in _endpoints)
                 endpoint.Dispose();
         }
+        TrySaveServerCatalog();
     }
 
     internal sealed class ProxyLease : IDisposable
