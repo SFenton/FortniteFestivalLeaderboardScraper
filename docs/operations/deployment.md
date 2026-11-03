@@ -291,6 +291,10 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   [data storage: band rank history](../architecture/data-storage.md#band-rank-history)).
   The rank-history rewrite archives (81.6 GB) were deleted on 2026-10-16 at
   the operator's request.
+- Since the scrape `1915` boundary (2026-11-03 16:53Z) the worker and API run
+  bundle `968e0b65` (#234: Epic edge 409 retries and retries of a
+  lock-contended snapshot partition creation; built on master `44679e8e`).
+  `fst-postgres` was recreated at the same boundary with a rotated log.
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
@@ -471,9 +475,11 @@ Rotated files are compressed, so the worker keeps roughly two days of
 `docker logs` history. Log options apply only when a container is created:
 recreating it starts a new log and deletes the old one. The production
 overlay's worker anchor got the same options at an idle boundary on
-2026-11-02. PostgreSQL's options take effect at its next recreate, which
-restarts the database, so that is scheduled separately. Per-scrape worker logs
-that the boundary scripts save under `fst-data/evidence/` are unaffected.
+2026-11-02. The production `docker-compose.yml` PostgreSQL anchor got them at
+the scrape `1915` boundary (2026-11-03 16:50Z). The pre-worker hook ran a
+`CHECKPOINT` before recreating `fst-postgres`, which restarts the database.
+Per-scrape worker logs that the boundary scripts save under
+`fst-data/evidence/` are unaffected.
 
 ## Networks and ports
 
