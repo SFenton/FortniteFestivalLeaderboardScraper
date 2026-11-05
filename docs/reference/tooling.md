@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-27
-last_verified_commit: b898b6cb
+last_verified: 2026-11-04
+last_verified_commit: 47a29cee
 sources:
   - tools/
   - FSTService/Persistence/Maintenance/DatabaseMaintenanceDryRunReporter.cs
@@ -60,6 +60,10 @@ sources:
   - FortniteFestivalWeb/scripts/check-coverage-ignores.mjs
   - tools/check-coverage-ignores.test.mjs
   - .github/agent-opportunities.json
+  - .fenton/repo.json
+  - .fenton/policy.json
+  - tools/fenton-platform.py
+  - tools/fenton_platform_test.py
   - .github/skills/
 update_triggers:
   - A repository tool, wrapper, generated-artifact command, MCP surface, or agent skill is added, removed, or changes purpose.
@@ -82,6 +86,42 @@ implementation fragments into ad hoc commands.
 | Explicit agent opportunity preflights | `tools/agent-opportunity-preflight.mjs`, `.github/agent-opportunities.json` |
 | Production MCP adapters | `tools/mcp/` |
 | Pak extraction | `tools/FortnitePakExtractor/` |
+
+## Optional Fenton shared test tooling
+
+This repository includes a small, repository-local boundary for the separately
+installed first-party `fenton_tooling` package. It does not vendor or download
+the package, modify production startup or images, or grant production,
+publication, provenance, destructive, provider, or model-gate authority.
+The parent-controlled installation is pinned to the approved first-party
+FentonPlatform revision `bcbfea6f545dd900ee4a824f89487790835a73ed`
+with tooling version `0.2.0`; this consumer does not
+invent or publish a public package release. The original Apple-only adoption
+pin `0b959268` predates the registered-recipe CLI and is not sufficient.
+The profile in `.fenton/repo.json` maps FST component paths and dependencies to
+recipe names; `.fenton/policy.json` retains the repository's protected safety
+boundaries.
+
+Use the wrapper from the repository root:
+
+```bash
+python3 tools/fenton-platform.py doctor
+python3 tools/fenton-platform.py select tools/secret-scan.test.mjs
+python3 tools/fenton-platform.py run --recipe secret-scan
+```
+
+The package is optional. `doctor`, `select`, and `run` fail clearly when the
+approved separately installed package is unavailable; they never silently
+substitute an empty result. The wrapper invokes `python -m fenton_tooling` with
+an argv list and unchanged repository cwd, without `PYTHONPATH` injection,
+shell interpolation, HTTP headers, or private credentials. The `run` command
+uses the installed package's registered-recipe interface:
+`python -I -m fenton_tooling run --recipe <name> --repo-root <absolute-root>`.
+
+The profile is selection metadata, not certification. A selector may identify
+service or web validation without claiming that validation ran; use the
+recipe's actual result and existing live/publication/provenance/destructive
+gates for qualification.
 
 ## Bundled CHOpt
 
