@@ -1,0 +1,42 @@
+{
+  "schema_version": "1",
+  "name": "FortniteFestivalLeaderboardScraper",
+  "components": {
+    "service": {
+      "paths": ["FSTService/**", "FSTService.Tests/**"],
+      "selectors": ["service-tests"]
+    },
+    "shared": {
+      "paths": ["FortniteFestival.Core/**", "packages/core/**"],
+      "selectors": ["shared-tests"]
+    },
+    "web": {
+      "paths": ["FortniteFestivalWeb/**", "packages/**"],
+      "selectors": ["web-unit"]
+    },
+    "repository-tools": {
+      "paths": ["tools/**", ".fenton/**", ".github/instructions/**"],
+      "selectors": ["secret-scan", "docs-check"]
+    },
+    "documentation": {
+      "paths": ["docs/**", "README.md", "AGENTS.md"],
+      "selectors": ["docs-check"]
+    }
+  },
+  "dependencies": {
+    "service": ["shared"],
+    "web": ["shared"],
+    "repository-tools": ["documentation"]
+  },
+  "recipes": {
+    "secret-scan": {
+      "argv": ["node", "--test", "tools/secret-scan.test.mjs"],
+      "component": "repository-tools",
+      "selectors": ["tools/secret-scan.test.mjs"],
+      "platform": "node",
+      "fixture": "synthetic-v1",
+      "timeout_seconds": 60,
+      "resources": []
+    }
+  }
+}

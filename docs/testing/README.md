@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: repository
-last_verified: 2026-09-14
-last_verified_commit: d15cbdf7
+last_verified: 2026-11-04
+last_verified_commit: 1d043482
 sources:
   - FortniteFestivalWeb/e2e/specs/responsive/desktop-scroll-panels.spec.ts
   - FortniteFestivalWeb/__test__/utils/scrollViewport.test.ts
@@ -114,6 +114,10 @@ sources:
   - .github/workflows/web-performance.yml
   - .github/workflows/web-playwright-nightly.yml
   - tools/check-docs.mjs
+  - .fenton/repo.json
+  - .fenton/policy.json
+  - tools/fenton-platform.py
+  - tools/fenton_platform_test.py
   - tools/check-coverage-ignores.test.mjs
   - tools/fst-worker-compose-guard.test.mjs
 update_triggers:
@@ -1426,6 +1430,30 @@ corepack yarn licenses:check
 ```
 
 ## Operational tools
+
+### Optional shared test-tooling wrapper
+
+The repository-local `tools/fenton-platform.py` is an optional thin wrapper
+around a separately installed first-party `fenton_tooling` package. It is
+disabled by absence: there is no vendored implementation and no automatic
+download, while an attempted command fails clearly if the package is missing.
+It only selects the profile in `.fenton/repo.json` or forwards a registered
+recipe to the installed package; it does not change CI defaults or production
+startup/images.
+
+```bash
+python3 tools/fenton-platform.py doctor
+python3 tools/fenton-platform.py select tools/secret-scan.test.mjs
+python3 tools/fenton-platform.py run --recipe secret-scan
+python3 tools/fenton_platform_test.py
+```
+
+The profile declares component dependencies and recipe names for selection.
+Declaring a .NET or web selector does not claim that it executed. Existing
+live-scrape parity, publication, provenance, destructive-change, and model
+qualification gates remain authoritative.
+The registered `secret-scan` recipe is the existing Node test command with no
+resource requirements; its profile declaration does not certify a result.
 
 The worker guard has a dependency-free Node harness with stubbed Docker/Compose
 behavior, including lock contention, signal cleanup, overall deadlines,
