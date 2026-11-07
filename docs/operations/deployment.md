@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-29
-last_verified_commit: f65a3a4a
+last_verified: 2026-11-07
+last_verified_commit: 47a29cee
 sources:
   - FSTService/Persistence/MetaDatabase.FrozenAcquisitionAbandonment.cs
   - docker-compose.yml
@@ -22,6 +22,7 @@ sources:
   - FortniteFestivalWeb/Dockerfile
   - FortniteFestivalWeb/nginx.conf
   - tools/fst-worker-compose-guard.sh
+  - /home/sfenton/Docker/compose_orchestrator.sh
   - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.yml
   - /home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml
 update_triggers:
@@ -51,6 +52,16 @@ repository Compose. Its boot set is PostgreSQL, `fstservice`, `festivalweb`, and
 the exact effective proxy services; `fstworker` remains stopped or Created.
 The orchestrator then hands off to the production-synchronized copy of the
 repository guard's `--recover-start` action.
+
+The boot orchestrator and deployed guard must agree on the current canonical
+topology: 30 to 80 exactly named PIA services, an effective count no larger
+than that canonical count, and unique contiguous effective container entries.
+Production currently defines 75 canonical and 75 effective services. Keep
+the production guard synchronized with the repository source when expanding
+the pool; a stale 30-service boot validator rejects the entire core startup,
+not just the worker. Recovery uses the existing local images and persistent
+binds, restores only the FST core and effective proxies, and then invokes
+guarded worker recovery without restarting Docker or unrelated stacks.
 
 Both repository templates place `fstworker` behind the `worker` Compose
 profile. A bare `docker compose up -d` therefore excludes it, while the guard's
