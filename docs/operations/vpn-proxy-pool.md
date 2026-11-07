@@ -1,8 +1,8 @@
 ---
 status: canonical
 owner: operations
-last_verified: 2026-09-27
-last_verified_commit: 0e06e61e
+last_verified: 2026-11-07
+last_verified_commit: 47a29cee
 sources:
   - FSTService/Program.cs
   - FSTService/ScraperOptions.cs
@@ -465,7 +465,7 @@ and do not enable or target the worker profile.
 | Root template | Four core services; proxy examples inactive |
 | `deploy/` template | Four optional AirVPN Gluetun endpoints |
 | Production base | Core services plus a larger provider pool |
-| Standard PIA overlay | 60 canonical services and 50 effective aligned endpoints as of 2026-10-04 (30 effective on 2026-10-03, 24 on 2026-09-26) |
+| Standard PIA overlay | 75 canonical services and 75 effective aligned endpoints as of 2026-11-07 |
 | Optional expansion overlays | Additional endpoints/recovery variants owned by the production project |
 
 The PIA guard requires the overlay filename `docker-compose.pia-30.yml` (a
@@ -475,6 +475,9 @@ defined, an effective count no greater than the canonical count, exact service
 names, aligned arrays, PIA provider labels, and matching worker dependencies.
 Canonical services beyond the effective arrays are spares the worker does not
 use; define and qualify new exits that way before adding them to the arrays.
+The production boot orchestrator and synchronized worker guard must both
+accept this same topology contract before a Docker restart; updating only
+Compose leaves startup vulnerable to an obsolete 30-service cap.
 The
 optional 80-endpoint expansion is a separate production-owned topology and is
 not the standard guard target.
