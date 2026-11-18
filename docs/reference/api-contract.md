@@ -10,6 +10,7 @@ sources:
   - FSTService/StartupPublicationReadOnlyState.cs
   - FSTService/Api/RolloutReadOnlyRequestGuardMiddleware.cs
   - FSTService/Api/NotificationService.cs
+  - FSTService/Persistence/ImprovementNotificationService.cs
   - FSTService/Api/PublicationRouteSurfaceContract.cs
   - FSTService/Scraping/PhaseProgressCatalog.cs
   - FSTService/Scraping/ScrapeProgressTracker.cs
@@ -246,6 +247,28 @@ Aggregate player scopes intentionally use different formulas:
   with unplayed charts contributing the worst percentile before credibility;
 - solo-family FC Rate uses the full family chart catalog, while Max Score %
   treats unplayed charts as 0% before its credibility adjustment.
+
+### Improvement notification feed order
+
+Player and band notification feeds return
+`ORDER BY detected_at DESC, event_id DESC`. Every card from one precompute run
+shares `detectedAt`, so `eventId` is the within-run display order and clients
+must keep server order (or tie-break on `eventId` descending). Each player run
+inserts instrument summary cards first and song cards last, so song cards
+display above the summaries they caused. Song cards display newest play
+(`end_time`) first, then by case-insensitive title and song ID; cards without a
+play time follow played cards. Summary cards display in instrument order (Lead,
+Bass, Drums, Vocals, then Pro instruments).
+
+A player song card coalesces every instrument detected for that
+(account, song) in one run. When a later run replaces a still-visible card, the
+replacement also carries the earlier card's events for other instruments, and
+for other event families on the same instrument, while their original
+detection is inside the live window. First-score/PB and stars/gold-stars are
+one family each; a newer event in a family replaces the carried one. Each
+`coalescedEvents` entry includes its own `detectedAt`, and the card's primary
+fields describe the newest run's events. Band feeds and player summary cards
+replace their lanes without carry-forward.
 
 ## Common behavior
 
