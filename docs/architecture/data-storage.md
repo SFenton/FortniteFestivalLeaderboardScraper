@@ -137,6 +137,14 @@ unchanged provider payload is intentional, and the unique
 `(notification_kind, song_id, source_key)` index makes notification recovery
 idempotent.
 
+`player_improvement_events` keeps one visible song card per
+(account, song) and one visible summary card per (account, instrument). A new
+song card expires the previous one and carries forward its still-live events
+for other instruments or event families, stamping each `coalescedEvents` entry
+with its original `detectedAt`; expired rows are pruned by the next run. Feed
+order and carry-forward rules are in the
+[API contract](../reference/api-contract.md#improvement-notification-feed-order).
+
 ### Scrape acquisition checkpoint
 
 `scrape_log` owns the durable acquisition/core checkpoint. The nullable

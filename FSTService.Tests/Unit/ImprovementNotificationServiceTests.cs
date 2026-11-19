@@ -480,6 +480,122 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void Precompute_CarriesEarlierInstrumentsIntoReplacementPlayerSongNotification()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100, stars: 6, isFullCombo: false, instrument: "Solo_Bass");
+        InsertCurrentEntry(score: 200000, rank: 200, stars: 6, isFullCombo: false, instrument: "Solo_Vocals");
+        BaselineCurrentState();
+
+        var firstDetectedAt = DateTime.UtcNow.AddHours(-24);
+        UpdateCurrentEntry(score: 100000, rank: 100, stars: 6, isFullCombo: true, instrument: "Solo_Bass");
+        Assert.Equal(1, DetectPlayerSongEvents(firstDetectedAt).PlayerSongEventsInserted);
+
+        UpdateCurrentEntry(score: 200000, rank: 200, stars: 6, isFullCombo: true, instrument: "Solo_Vocals");
+        var secondReport = DetectPlayerSongEvents();
+
+        Assert.Equal(1, secondReport.PlayerSongEventsInserted);
+        var live = Assert.Single(_sut.GetPlayerNotifications(AccountId).Items);
+        Assert.Equal("player_fc_achieved", live.EventKind);
+        Assert.Equal("Solo_Vocals", live.Instrument);
+        AssertCoalescedInstruments(live, "Solo_Bass", "Solo_Vocals");
+        AssertCoalescedKinds(live, "player_fc_achieved", "player_fc_achieved");
+        Assert.Equal(
+            new[] { "Solo_Bass:player_fc_achieved", "Solo_Vocals:player_fc_achieved" },
+            CoalescedEventSummaries(live));
+        Assert.Equal(firstDetectedAt, CoalescedEventDetectedAt(live, "Solo_Bass", "player_fc_achieved"), TimeSpan.FromSeconds(1));
+        Assert.Equal(live.DetectedAt, CoalescedEventDetectedAt(live, "Solo_Vocals", "player_fc_achieved"), TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void Precompute_ReplacesSameInstrumentEventFamily_WhenCarryingPlayerSongNotification()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100, stars: 5, isFullCombo: false);
+        BaselineCurrentState();
+
+        UpdateCurrentEntry(score: 101000, rank: 100, stars: 6, isFullCombo: true);
+        DetectPlayerSongEvents(DateTime.UtcNow.AddHours(-1));
+
+        UpdateCurrentEntry(score: 102000, rank: 100, stars: 6, isFullCombo: true);
+        DetectPlayerSongEvents();
+
+        var live = Assert.Single(_sut.GetPlayerNotifications(AccountId).Items);
+        Assert.Equal("player_score_pb", live.EventKind);
+        Assert.Equal(102000m, live.NewNumeric);
+        AssertCoalescedKinds(
+            live,
+            "player_score_pb",
+            "player_fc_achieved",
+            "player_gold_stars_achieved",
+            "player_stars_improved");
+        var scoreChild = live.Payload.GetProperty("coalescedEvents")
+            .EnumerateArray()
+            .Single(element => element.GetProperty("eventKind").GetString() == "player_score_pb");
+        Assert.Equal(102000m, scoreChild.GetProperty("newNumeric").GetDecimal());
+    }
+
+    [Fact]
+    public void Precompute_DropsCarriedPlayerSongEvents_OutsideLiveWindow()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100, stars: 6, isFullCombo: false, instrument: "Solo_Bass");
+        InsertCurrentEntry(score: 200000, rank: 200, stars: 6, isFullCombo: false, instrument: "Solo_Vocals");
+        BaselineCurrentState();
+
+        UpdateCurrentEntry(score: 100000, rank: 100, stars: 6, isFullCombo: true, instrument: "Solo_Bass");
+        DetectPlayerSongEvents();
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            // Simulate an event already carried forward from a card older than the live window.
+            cmd.CommandText = """
+                UPDATE player_improvement_events
+                SET payload = jsonb_set(
+                    payload,
+                    '{coalescedEvents,0,detectedAt}',
+                    to_jsonb(now() - interval '80 hours'))
+                WHERE account_id = @accountId;
+                """;
+            cmd.Parameters.AddWithValue("accountId", AccountId);
+            Assert.Equal(1, cmd.ExecuteNonQuery());
+        }
+
+        UpdateCurrentEntry(score: 200000, rank: 200, stars: 6, isFullCombo: true, instrument: "Solo_Vocals");
+        DetectPlayerSongEvents();
+
+        var live = Assert.Single(_sut.GetPlayerNotifications(AccountId).Items);
+        AssertCoalescedInstruments(live, "Solo_Vocals");
+        AssertCoalescedKinds(live, "player_fc_achieved");
+    }
+
+    [Fact]
+    public void Precompute_InsertsPlayerFeedInDisplayOrder_SongsByNewestPlayThenSummaries()
+    {
+        InsertSong("song-alpha", "Alpha");
+        InsertSong("song-bravo", "Bravo");
+        InsertSong("song-charlie", "charlie");
+        foreach (var songId in new[] { "song-alpha", "song-bravo", "song-charlie", "song-unplayed" })
+            InsertCurrentEntry(score: 100000, rank: 100, stars: 6, isFullCombo: false, songId: songId);
+        InsertAccountRanking(weightedRank: 100, instrument: "Solo_Guitar");
+        InsertAccountRanking(weightedRank: 100, instrument: "Solo_Drums");
+        PrecomputePlayerSongsAndRankings(baselineOnly: true);
+
+        UpdateCurrentEntry(score: 101000, rank: 100, songId: "song-alpha", endTime: "2026-11-17T10:00:00.0000000Z");
+        UpdateCurrentEntry(score: 101000, rank: 100, songId: "song-charlie", endTime: "2026-11-17T12:00:00.0000000Z");
+        UpdateCurrentEntry(score: 101000, rank: 100, songId: "song-bravo", endTime: "2026-11-17T12:00:00.0000000Z");
+        UpdateCurrentEntry(score: 101000, rank: 100, songId: "song-unplayed");
+        UpdateAccountRanking(weightedRank: 90, instrument: "Solo_Drums");
+        UpdateAccountRanking(weightedRank: 90, instrument: "Solo_Guitar");
+        PrecomputePlayerSongsAndRankings(baselineOnly: false);
+
+        var feed = _sut.GetPlayerNotifications(AccountId).Items;
+
+        Assert.Single(feed.Select(item => item.DetectedAt).Distinct());
+        Assert.Equal(
+            new[] { "song-bravo", "song-charlie", "song-alpha", "song-unplayed", "Solo_Guitar", "Solo_Drums" },
+            feed.Select(item => item.SongId ?? item.Instrument).ToArray());
+        Assert.Equal(feed.Select(item => item.EventId).OrderByDescending(id => id), feed.Select(item => item.EventId));
+    }
+
+    [Fact]
     public void Precompute_DoesNotEmitBandSongRankImprovement_WhenScoreDidNotIncrease()
     {
         InsertCurrentBandEntry(score: 200000, rank: 100);
@@ -995,7 +1111,7 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             PruneExpired: false));
     }
 
-    private ImprovementNotificationPrecomputeReport DetectPlayerSongEvents()
+    private ImprovementNotificationPrecomputeReport DetectPlayerSongEvents(DateTime? detectedAtUtc = null)
     {
         return _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
             Execute: true,
@@ -1005,7 +1121,49 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             IncludeBands: false,
             IncludeSongEvents: true,
             IncludeRankings: false,
+            PruneExpired: false,
+            DetectedAtUtc: detectedAtUtc));
+    }
+
+    private ImprovementNotificationPrecomputeReport PrecomputePlayerSongsAndRankings(bool baselineOnly)
+    {
+        return _sut.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Execute: true,
+            BaselineOnly: baselineOnly,
+            Scope: "all",
+            IncludePlayers: true,
+            IncludeBands: false,
+            IncludeSongEvents: true,
+            IncludeRankings: true,
             PruneExpired: false));
+    }
+
+    private void InsertSong(string songId, string title)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO songs (song_id, title) VALUES (@songId, @title);";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("title", title);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static string[] CoalescedEventSummaries(ImprovementNotificationDto notification)
+    {
+        return notification.Payload.GetProperty("coalescedEvents")
+            .EnumerateArray()
+            .Select(element => $"{element.GetProperty("instrument").GetString()}:{element.GetProperty("eventKind").GetString()}")
+            .ToArray();
+    }
+
+    private static DateTime CoalescedEventDetectedAt(ImprovementNotificationDto notification, string instrument, string eventKind)
+    {
+        var child = notification.Payload.GetProperty("coalescedEvents")
+            .EnumerateArray()
+            .Single(element =>
+                element.GetProperty("instrument").GetString() == instrument
+                && element.GetProperty("eventKind").GetString() == eventKind);
+        return child.GetProperty("detectedAt").GetDateTime().ToUniversalTime();
     }
 
     private void BaselineCurrentBandState()
@@ -1251,7 +1409,9 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         int stars = 6,
         bool isFullCombo = true,
         string instrument = Instrument,
-        string accountId = AccountId)
+        string accountId = AccountId,
+        string songId = SongId,
+        string? endTime = null)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1259,13 +1419,14 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             INSERT INTO current_leaderboard_entries (
                 song_id, instrument, account_id, score, accuracy, is_full_combo,
                 stars, season, percentile, rank, api_rank, source, difficulty,
-                first_seen_at, last_updated_at, computed_at)
+                end_time, first_seen_at, last_updated_at, computed_at)
             VALUES (
                 @songId, @instrument, @accountId, @score, 100, @isFullCombo,
                 @stars, 14, -1, @rank, @rank, 'test', 3,
-                now(), now(), now());
+                @endTime, now(), now(), now());
             """;
-        cmd.Parameters.AddWithValue("songId", SongId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.Add("endTime", NpgsqlTypes.NpgsqlDbType.Text).Value = (object?)endTime ?? DBNull.Value;
         cmd.Parameters.AddWithValue("instrument", instrument);
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);
@@ -1282,7 +1443,9 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         int stars = 6,
         bool isFullCombo = true,
         string instrument = Instrument,
-        string accountId = AccountId)
+        string accountId = AccountId,
+        string songId = SongId,
+        string? endTime = null)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1293,13 +1456,15 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 api_rank = @rank,
                 stars = @stars,
                 is_full_combo = @isFullCombo,
+                end_time = COALESCE(@endTime, end_time),
                 last_updated_at = now(),
                 computed_at = now()
             WHERE song_id = @songId
               AND instrument = @instrument
               AND account_id = @accountId;
             """;
-        cmd.Parameters.AddWithValue("songId", SongId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.Add("endTime", NpgsqlTypes.NpgsqlDbType.Text).Value = (object?)endTime ?? DBNull.Value;
         cmd.Parameters.AddWithValue("instrument", instrument);
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);

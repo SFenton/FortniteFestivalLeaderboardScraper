@@ -349,6 +349,8 @@ export type ImprovementNotificationEventPayload = {
   rankingScope?: string | null;
   scopeComboId?: string | null;
   comboId?: string | null;
+  /** When this event was first detected; carried-forward events keep their original time. */
+  detectedAt?: string | null;
 };
 
 export type ImprovementNotificationPayload = Record<string, unknown> & {

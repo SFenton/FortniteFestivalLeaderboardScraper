@@ -732,6 +732,36 @@ public sealed class ImprovementNotificationService
             if (options.IncludeBands && registeredOnly)
                 PrepareRegisteredBandWorkingSet(conn, tx, options.CommandTimeoutSeconds);
 
+            // Feeds show the newest event_id first within one detected_at, so rank
+            // summaries insert before the song cards that caused them.
+            if (options.IncludePlayers && options.IncludeRankings)
+            {
+                var rows = ExecuteScalarLong(conn, tx, CountPlayerRankRowsSql(registeredOnly), options.CommandTimeoutSeconds);
+                var baselineRows = execute && !options.BaselineOnly && registeredOnly
+                    ? ExecuteScalarLong(
+                        conn,
+                        tx,
+                        BaselineNewPlayerRankSubjectsSql(),
+                        options.CommandTimeoutSeconds,
+                        detectedAt: detectedAt,
+                        previousCompletedAt: previousPlayerRankCompletedAt)
+                    : 0;
+                var events = options.BaselineOnly
+                    ? 0
+                    : ExecuteScalarLong(conn, tx, PlayerRankEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
+                var stateRows = execute
+                    ? ExecuteScalarLong(conn, tx, PlayerRankStateUpsertSql(registeredOnly), options.CommandTimeoutSeconds, null, detectedAt, expiresAt)
+                    : rows;
+
+                report = report with
+                {
+                    PlayerRankRowsScanned = rows,
+                    PlayerRankEventsInserted = events,
+                    PlayerRankStateUpserts = stateRows,
+                    PlayerRankBaselineRows = baselineRows,
+                };
+            }
+
             if (options.IncludePlayers && options.IncludeSongEvents)
             {
                 var rows = ExecuteScalarLong(
@@ -776,34 +806,6 @@ public sealed class ImprovementNotificationService
                     PlayerSongEventsInserted = events,
                     PlayerSongStateUpserts = stateRows,
                     PlayerSongBaselineRows = baselineRows,
-                };
-            }
-
-            if (options.IncludePlayers && options.IncludeRankings)
-            {
-                var rows = ExecuteScalarLong(conn, tx, CountPlayerRankRowsSql(registeredOnly), options.CommandTimeoutSeconds);
-                var baselineRows = execute && !options.BaselineOnly && registeredOnly
-                    ? ExecuteScalarLong(
-                        conn,
-                        tx,
-                        BaselineNewPlayerRankSubjectsSql(),
-                        options.CommandTimeoutSeconds,
-                        detectedAt: detectedAt,
-                        previousCompletedAt: previousPlayerRankCompletedAt)
-                    : 0;
-                var events = options.BaselineOnly
-                    ? 0
-                    : ExecuteScalarLong(conn, tx, PlayerRankEventsSql(registeredOnly, execute), options.CommandTimeoutSeconds, runId, detectedAt, expiresAt, source);
-                var stateRows = execute
-                    ? ExecuteScalarLong(conn, tx, PlayerRankStateUpsertSql(registeredOnly), options.CommandTimeoutSeconds, null, detectedAt, expiresAt)
-                    : rows;
-
-                report = report with
-                {
-                    PlayerRankRowsScanned = rows,
-                    PlayerRankEventsInserted = events,
-                    PlayerRankStateUpserts = stateRows,
-                    PlayerRankBaselineRows = baselineRows,
                 };
             }
 
@@ -1703,6 +1705,10 @@ public sealed class ImprovementNotificationService
                    v.new_numeric,
                    v.old_rank,
                    v.new_rank,
+                   CASE
+                       WHEN c.end_time ~ '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]'
+                           THEN left(c.end_time, 19) COLLATE "C"
+                   END AS play_key,
                    jsonb_build_object(
                        'oldScore', s.score,
                        'newScore', c.score,
@@ -1781,106 +1787,153 @@ public sealed class ImprovementNotificationService
         {PlayerRankEventSelectOrInsertSql(execute)}
         """;
 
+    private const string PlayerSongInstrumentOrderCase = """
+        CASE {0}
+            WHEN 'Solo_Guitar' THEN 10
+            WHEN 'Solo_Bass' THEN 20
+            WHEN 'Solo_Drums' THEN 30
+            WHEN 'Solo_Vocals' THEN 40
+            WHEN 'Solo_PeripheralGuitar' THEN 50
+            WHEN 'Solo_PeripheralBass' THEN 60
+            WHEN 'Solo_PeripheralVocals' THEN 70
+            WHEN 'Solo_PeripheralCymbals' THEN 80
+            WHEN 'Solo_PeripheralDrums' THEN 90
+            ELSE 100 END
+        """;
+
+    private const string PlayerSongEventKindOrderCase = """
+        CASE {0}
+            WHEN 'player_first_score' THEN 10
+            WHEN 'player_score_pb' THEN 20
+            WHEN 'player_fc_achieved' THEN 30
+            WHEN 'player_gold_stars_achieved' THEN 40
+            WHEN 'player_stars_improved' THEN 50
+            WHEN 'player_song_rank_improved' THEN 60
+            WHEN 'player_difficulty_bumped' THEN 70
+            ELSE 100 END
+        """;
+
+    // A newer event replaces an older one for the same instrument and family;
+    // first-score/PB and stars/gold-stars describe the same chart state.
+    private const string PlayerSongEventFamilyCase = """
+        CASE
+            WHEN {0} IN ('player_first_score', 'player_score_pb') THEN 'score'
+            WHEN {0} IN ('player_stars_improved', 'player_gold_stars_achieved') THEN 'stars'
+            ELSE {0} END
+        """;
+
     private static string PlayerSongEventSelectOrInsertSql(bool execute)
     {
-        const string coalesced = """
-            , grouped_event_rows AS (
+        string InstrumentOrder(string column) => string.Format(PlayerSongInstrumentOrderCase, column);
+        string KindOrder(string column) => string.Format(PlayerSongEventKindOrderCase, column);
+        string Family(string column) => string.Format(PlayerSongEventFamilyCase, column);
+
+        // Cards for an (account, song) lane coalesce every instrument detected in
+        // this run. When a newer run replaces a still-visible card, events for
+        // other instruments/families that are still inside the live window are
+        // carried into the replacement so earlier achievements stay visible.
+        var coalesced = $$"""
+            , event_lanes AS (
+                SELECT DISTINCT account_id, song_id
+                FROM event_rows
+            ), new_lane_events AS (
                 SELECT account_id,
                        song_id,
-                       COUNT(*) AS event_count,
-                       array_agg(event_kind ORDER BY CASE instrument
-                           WHEN 'Solo_Guitar' THEN 10
-                           WHEN 'Solo_Bass' THEN 20
-                           WHEN 'Solo_Drums' THEN 30
-                           WHEN 'Solo_Vocals' THEN 40
-                           WHEN 'Solo_PeripheralGuitar' THEN 50
-                           WHEN 'Solo_PeripheralBass' THEN 60
-                           WHEN 'Solo_PeripheralVocals' THEN 70
-                           WHEN 'Solo_PeripheralCymbals' THEN 80
-                           WHEN 'Solo_PeripheralDrums' THEN 90
-                           ELSE 100 END, CASE event_kind
-                           WHEN 'player_first_score' THEN 10
-                           WHEN 'player_score_pb' THEN 20
-                           WHEN 'player_fc_achieved' THEN 30
-                           WHEN 'player_gold_stars_achieved' THEN 40
-                           WHEN 'player_stars_improved' THEN 50
-                           WHEN 'player_song_rank_improved' THEN 60
-                           WHEN 'player_difficulty_bumped' THEN 70
-                           ELSE 100 END, event_kind) AS event_kinds,
-                       array_agg(DISTINCT instrument ORDER BY instrument) AS coalesced_instruments_raw,
-                       jsonb_agg(jsonb_build_object(
+                       instrument,
+                       event_kind,
+                       play_key,
+                       jsonb_build_object(
                            'eventKind', event_kind,
                            'instrument', instrument,
                            'metric', metric,
                            'oldNumeric', old_numeric,
                            'newNumeric', new_numeric,
                            'oldRank', old_rank,
-                           'newRank', new_rank)
-                           ORDER BY CASE instrument
-                               WHEN 'Solo_Guitar' THEN 10
-                               WHEN 'Solo_Bass' THEN 20
-                               WHEN 'Solo_Drums' THEN 30
-                               WHEN 'Solo_Vocals' THEN 40
-                               WHEN 'Solo_PeripheralGuitar' THEN 50
-                               WHEN 'Solo_PeripheralBass' THEN 60
-                               WHEN 'Solo_PeripheralVocals' THEN 70
-                               WHEN 'Solo_PeripheralCymbals' THEN 80
-                               WHEN 'Solo_PeripheralDrums' THEN 90
-                               ELSE 100 END, CASE event_kind
-                               WHEN 'player_first_score' THEN 10
-                               WHEN 'player_score_pb' THEN 20
-                               WHEN 'player_fc_achieved' THEN 30
-                               WHEN 'player_gold_stars_achieved' THEN 40
-                               WHEN 'player_stars_improved' THEN 50
-                               WHEN 'player_song_rank_improved' THEN 60
-                               WHEN 'player_difficulty_bumped' THEN 70
-                               ELSE 100 END, event_kind) AS coalesced_events
+                           'newRank', new_rank,
+                           'detectedAt', @detectedAt) AS event
                 FROM event_rows
+            ), prior_lane_events AS (
+                SELECT existing.account_id,
+                       existing.song_id,
+                       prior.event->>'instrument' AS instrument,
+                       prior.event->>'eventKind' AS event_kind,
+                       CASE
+                           WHEN prior.event->>'detectedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+                               THEN (prior.event->>'detectedAt')::timestamptz
+                           ELSE existing.detected_at
+                       END AS original_detected_at,
+                       prior.event
+                FROM player_improvement_events existing
+                JOIN event_lanes lanes
+                  ON lanes.account_id = existing.account_id
+                 AND lanes.song_id = existing.song_id
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE
+                        WHEN jsonb_typeof(existing.payload->'coalescedEvents') = 'array'
+                         AND jsonb_array_length(existing.payload->'coalescedEvents') > 0
+                            THEN existing.payload->'coalescedEvents'
+                        ELSE jsonb_build_array(jsonb_build_object(
+                            'eventKind', existing.event_kind,
+                            'instrument', existing.instrument,
+                            'metric', existing.metric,
+                            'oldNumeric', existing.old_numeric,
+                            'newNumeric', existing.new_numeric,
+                            'oldRank', existing.old_rank,
+                            'newRank', existing.new_rank))
+                    END) AS prior(event)
+                WHERE existing.delivery_state = 'visible'
+                  AND existing.expires_at > now()
+                  AND jsonb_typeof(prior.event) = 'object'
+                  AND prior.event->>'eventKind' IS NOT NULL
+            ), carried_lane_events AS (
+                SELECT DISTINCT ON (p.account_id, p.song_id, p.instrument, p.event_kind)
+                       p.account_id,
+                       p.song_id,
+                       p.instrument,
+                       p.event_kind,
+                       NULL::TEXT AS play_key,
+                       p.event || jsonb_build_object('detectedAt', p.original_detected_at) AS event
+                FROM prior_lane_events p
+                WHERE p.original_detected_at > @detectedAt - (@expiresAt - @detectedAt)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM new_lane_events n
+                      WHERE n.account_id = p.account_id
+                        AND n.song_id = p.song_id
+                        AND n.instrument IS NOT DISTINCT FROM p.instrument
+                        AND {{Family("n.event_kind")}} = {{Family("p.event_kind")}})
+                ORDER BY p.account_id, p.song_id, p.instrument, p.event_kind, p.original_detected_at DESC
+            ), lane_events AS (
+                SELECT * FROM new_lane_events
+                UNION ALL
+                SELECT * FROM carried_lane_events
+            ), grouped_event_rows AS (
+                SELECT account_id,
+                       song_id,
+                       COUNT(*) AS event_count,
+                       MAX(play_key) AS lane_play_key,
+                       array_agg(event_kind ORDER BY {{InstrumentOrder("instrument")}}, {{KindOrder("event_kind")}}, event_kind) AS event_kinds,
+                       array_agg(DISTINCT instrument) FILTER (WHERE instrument IS NOT NULL) AS coalesced_instruments_raw,
+                       jsonb_agg(event ORDER BY {{InstrumentOrder("instrument")}}, {{KindOrder("event_kind")}}, event_kind) AS coalesced_events
+                FROM lane_events
                 GROUP BY account_id, song_id
             ), ordered_grouped_event_rows AS (
                 SELECT account_id,
                        song_id,
                        event_count,
+                       lane_play_key,
                        event_kinds,
                        ARRAY(
                            SELECT instrument
                            FROM unnest(coalesced_instruments_raw) instrument
-                           ORDER BY CASE instrument
-                               WHEN 'Solo_Guitar' THEN 10
-                               WHEN 'Solo_Bass' THEN 20
-                               WHEN 'Solo_Drums' THEN 30
-                               WHEN 'Solo_Vocals' THEN 40
-                               WHEN 'Solo_PeripheralGuitar' THEN 50
-                               WHEN 'Solo_PeripheralBass' THEN 60
-                               WHEN 'Solo_PeripheralVocals' THEN 70
-                               WHEN 'Solo_PeripheralCymbals' THEN 80
-                               WHEN 'Solo_PeripheralDrums' THEN 90
-                               ELSE 100 END, instrument
+                           ORDER BY {{InstrumentOrder("instrument")}}, instrument
                        ) AS coalesced_instruments,
                        coalesced_events
                 FROM grouped_event_rows
             ), primary_event_rows AS (
                 SELECT DISTINCT ON (account_id, song_id) *
                 FROM event_rows
-                ORDER BY account_id, song_id, CASE instrument
-                    WHEN 'Solo_Guitar' THEN 10
-                    WHEN 'Solo_Bass' THEN 20
-                    WHEN 'Solo_Drums' THEN 30
-                    WHEN 'Solo_Vocals' THEN 40
-                    WHEN 'Solo_PeripheralGuitar' THEN 50
-                    WHEN 'Solo_PeripheralBass' THEN 60
-                    WHEN 'Solo_PeripheralVocals' THEN 70
-                    WHEN 'Solo_PeripheralCymbals' THEN 80
-                    WHEN 'Solo_PeripheralDrums' THEN 90
-                    ELSE 100 END, CASE event_kind
-                    WHEN 'player_first_score' THEN 10
-                    WHEN 'player_score_pb' THEN 20
-                    WHEN 'player_fc_achieved' THEN 30
-                    WHEN 'player_gold_stars_achieved' THEN 40
-                    WHEN 'player_stars_improved' THEN 50
-                    WHEN 'player_song_rank_improved' THEN 60
-                    WHEN 'player_difficulty_bumped' THEN 70
-                    ELSE 100 END, event_kind
+                ORDER BY account_id, song_id, {{InstrumentOrder("instrument")}}, {{KindOrder("event_kind")}}, event_kind
             ), coalesced_event_rows AS (
                 SELECT p.account_id,
                        p.event_kind,
@@ -1891,6 +1944,7 @@ public sealed class ImprovementNotificationService
                        p.new_numeric,
                        p.old_rank,
                        p.new_rank,
+                       g.lane_play_key,
                        p.payload || jsonb_build_object(
                            'coalescedEventCount', g.event_count,
                            'coalescedEventKinds', g.event_kinds,
@@ -1909,6 +1963,9 @@ public sealed class ImprovementNotificationService
                 SELECT COUNT(*) FROM coalesced_event_rows;
                 """;
 
+        // Feeds sort by detected_at DESC, event_id DESC, so insertion order is
+        // the reverse of display order: the newest play inserts last and shows
+        // first, with song title as the stable tie-breaker.
         return $"""
             {coalesced}, superseded AS (
                 UPDATE player_improvement_events existing
@@ -1925,11 +1982,16 @@ public sealed class ImprovementNotificationService
                     old_numeric, new_numeric, old_rank, new_rank, payload,
                     detected_at, expires_at, source,
                     notification_purpose, notification_cause, delivery_state)
-                SELECT @runId, account_id, event_kind, song_id, instrument, metric,
-                       old_numeric, new_numeric, old_rank, new_rank, payload,
+                SELECT @runId, c.account_id, c.event_kind, c.song_id, c.instrument, c.metric,
+                       c.old_numeric, c.new_numeric, c.old_rank, c.new_rank, c.payload,
                        @detectedAt, @expiresAt, @source,
                        'routine_score_observation_v1', 'score_observation', 'visible'
-                FROM coalesced_event_rows
+                FROM coalesced_event_rows c
+                LEFT JOIN songs song ON song.song_id = c.song_id
+                ORDER BY c.lane_play_key ASC NULLS FIRST,
+                         lower(song.title) DESC NULLS FIRST,
+                         c.song_id DESC,
+                         c.account_id
                 RETURNING 1
             )
             SELECT COUNT(*) FROM inserted;
@@ -2039,6 +2101,9 @@ public sealed class ImprovementNotificationService
                        @detectedAt, @expiresAt, @source,
                        'routine_score_observation_v1', 'score_observation', 'visible'
                 FROM coalesced_event_rows
+                ORDER BY {string.Format(PlayerSongInstrumentOrderCase, "instrument")} DESC,
+                         instrument DESC,
+                         account_id
                 RETURNING 1
             )
             SELECT COUNT(*) FROM inserted;
