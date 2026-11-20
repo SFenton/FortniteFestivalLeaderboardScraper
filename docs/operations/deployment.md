@@ -304,6 +304,17 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   25,000 successful requests per minute and finished leaderboard and band
   fetch in 33 minutes, against about 10,000 per minute and 63 minutes in
   `1916`.
+- Since 2026-11-20 05:14Z the worker and API run `8f3af8a4` (#239,
+  notification feed ordering), pinned as
+  `ghcr.io/sfenton/fstservice@sha256:688882e8…`. Scrapes `2149` and `2150` had
+  stalled behind sustained Epic edge HTTP 429s, so the operator stopped `2150`
+  mid-acquisition to deploy. The graceful stop unfroze reads but left an
+  `interrupted` attempt, the current worker operation, and the working
+  publication pointer. The documented
+  [interrupted-acquisition normalization](live-safety.md#interrupted-acquisition-normalization-handoff)
+  followed by ordinary failure isolation (`scrape_acquisition_failed`) released
+  it, and `--recreate` then started the worker. Published scrape `2148` stayed
+  current throughout.
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
