@@ -15,6 +15,7 @@ EXPECTED_WORKER_IMAGE="${EXPECTED_WORKER_IMAGE:-}"
 EXPECTED_WORKER_IMAGE_ID=""
 EXPECTED_WORKER_REVISION=""
 EXPECTED_WORKER_CONFIG_SHA256=""
+ALLOW_UNHEALTHY_PROXIES=0
 PUBLICATION_COMMIT_DEFERRED_REASON="publication-commit-deferred"
 WORKER_MUTATION_LOCK_PATH="${FST_WORKER_COMPOSE_GUARD_LOCK_PATH:-}"
 INHERITED_WORKER_LOCK_FD=""
@@ -88,6 +89,15 @@ Options:
   --expected-worker-config-sha256 H
                            Require the canonical resolved fstworker service
                            configuration, excluding only image, to hash to H.
+  --allow-unhealthy-proxies N
+                           Accept up to N effective proxies that are not
+                           running and healthy (default 0). Allowed with
+                           --check, --recreate, and --recover-start only, and
+                           at most a quarter of the effective set. Tolerated
+                           proxies skip the runtime probes; every other
+                           effective proxy must still pass them. For a
+                           deliberate operator restart after the pool drifted
+                           unhealthy while the worker was stopped.
   --inherited-worker-lock-fd N
                            For a mutating action, require descriptor N to
                            already own the canonical worker lock in this same
@@ -111,6 +121,7 @@ while [[ $# -gt 0 ]]; do
         --expected-worker-image-id) EXPECTED_WORKER_IMAGE_ID="$2"; shift 2 ;;
         --expected-worker-revision) EXPECTED_WORKER_REVISION="$2"; shift 2 ;;
         --expected-worker-config-sha256) EXPECTED_WORKER_CONFIG_SHA256="$2"; shift 2 ;;
+        --allow-unhealthy-proxies) ALLOW_UNHEALTHY_PROXIES="${2-}"; shift 2 ;;
         --inherited-worker-lock-fd) INHERITED_WORKER_LOCK_FD="$2"; shift 2 ;;
         --inherited-worker-lock-owner-pid) INHERITED_WORKER_LOCK_OWNER_PID="$2"; shift 2 ;;
         --compose-dir) COMPOSE_DIR="$2"; shift 2 ;;
@@ -123,6 +134,17 @@ if $RECOVER_START_REQUESTED \
     && { $RUNONCE_ACTION_REQUESTED || [[ "$ACTION" != "recover-start" ]]; }
 then
     printf 'ERROR: --recover-start cannot be combined with a run-once or other action\n' >&2
+    exit 64
+fi
+if [[ ! "$ALLOW_UNHEALTHY_PROXIES" =~ ^[0-9]+$ ]]; then
+    printf 'ERROR: --allow-unhealthy-proxies must be a non-negative integer\n' >&2
+    exit 64
+fi
+ALLOW_UNHEALTHY_PROXIES=$((10#$ALLOW_UNHEALTHY_PROXIES))
+if ((ALLOW_UNHEALTHY_PROXIES > 0)) \
+    && [[ ! "$ACTION" =~ ^(check|recreate|recover-start)$ ]]
+then
+    printf 'ERROR: --allow-unhealthy-proxies requires --check, --recreate, or --recover-start\n' >&2
     exit 64
 fi
 if ! $RUNTIME_PROBES && [[ "$ACTION" != "check" && "$ACTION" != "check-runonce" ]]; then
@@ -1479,6 +1501,11 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     printf 'ERROR: internal guard node-count mismatch\n' >&2
     exit 1
 fi
+if ((ALLOW_UNHEALTHY_PROXIES > expected_count / 4)); then
+    printf 'ERROR: --allow-unhealthy-proxies %s exceeds a quarter of the %s effective proxies\n' \
+        "$ALLOW_UNHEALTHY_PROXIES" "$expected_count" >&2
+    exit 64
+fi
 
 if [[ "$DATA_PROFILE" == "scrape-resume" ]]; then
     if ! validate_scrape_resume_worker_binding \
@@ -2502,6 +2529,11 @@ recreate_unhealthy_effective_proxies() {
         return 0
     fi
     if ((recreate_count > RECOVERY_MAX_PROXY_RECREATES)); then
+        if ((recreate_count <= ALLOW_UNHEALTHY_PROXIES)); then
+            printf 'compose_guard recovery=proxy-recreate skipped=over-cap count=%s allowed_unhealthy=%s\n' \
+                "$recreate_count" "$ALLOW_UNHEALTHY_PROXIES"
+            return 3
+        fi
         printf 'ERROR: unhealthy effective proxy count exceeds the recovery cap\n' >&2
         return 1
     fi
@@ -2654,6 +2686,11 @@ run_proxy_recovery_sequence() {
     if ((recreate_status == 2)); then
         return 1
     fi
+    if ((recreate_status == 3)); then
+        printf 'compose_guard recovery=proxy-convergence phase=initial status=degraded unhealthy=%s allowed_unhealthy=%s\n' \
+            "${#unhealthy_effective_nodes[@]}" "$ALLOW_UNHEALTHY_PROXIES"
+        return 0
+    fi
     if ((recreate_status != 0)); then
         return 1
     fi
@@ -2666,6 +2703,11 @@ run_proxy_recovery_sequence() {
         return 1
     fi
     if ((recreate_wait_status != 0)); then
+        if ((${#unhealthy_effective_nodes[@]} <= ALLOW_UNHEALTHY_PROXIES)); then
+            printf 'compose_guard recovery=proxy-convergence phase=post-recreate status=degraded unhealthy=%s allowed_unhealthy=%s\n' \
+                "${#unhealthy_effective_nodes[@]}" "$ALLOW_UNHEALTHY_PROXIES"
+            return 0
+        fi
         printf 'ERROR: effective proxies did not become healthy after bounded recovery\n' >&2
         return 1
     fi
@@ -3218,6 +3260,7 @@ print(hashlib.sha256(value.encode()).hexdigest())
     fi
 
     declare -A egress_owner=()
+    tolerated_unhealthy_count=0
     for node in "${effective_nodes[@]}"; do
         if [[ "$ACTION" == "recover-start" ]] \
             && ! enforce_recovery_total_deadline
@@ -3230,8 +3273,18 @@ print(hashlib.sha256(value.encode()).hexdigest())
                 "$node"
         )"
         if [[ "$state" != "running|healthy" ]]; then
+            if ((tolerated_unhealthy_count < ALLOW_UNHEALTHY_PROXIES)); then
+                tolerated_unhealthy_count=$((tolerated_unhealthy_count + 1))
+                printf 'compose_guard runtime=tolerated-unhealthy proxy=%s state=%s\n' \
+                    "$node" "$state"
+                continue
+            fi
             printf 'ERROR: effective proxy %s is not running and healthy (%s)\n' \
                 "$node" "$state" >&2
+            if ((ALLOW_UNHEALTHY_PROXIES > 0)); then
+                printf 'ERROR: more than %s effective proxies are unhealthy\n' \
+                    "$ALLOW_UNHEALTHY_PROXIES" >&2
+            fi
             exit 1
         fi
 
@@ -3338,11 +3391,18 @@ print(hashlib.sha256(value.encode()).hexdigest())
         exit 1
     fi
 
+    probed_count=$((expected_count - tolerated_unhealthy_count))
+    tolerated_suffix=""
+    if ((tolerated_unhealthy_count > 0)); then
+        tolerated_suffix=" unhealthy_tolerated=$tolerated_unhealthy_count"
+    fi
     if [[ "$ACTION" == "recover-start" ]]; then
-        printf 'compose_guard runtime=ok effective_set=qualified dns=ok control=ok egress=distinct\n'
+        printf 'compose_guard runtime=ok effective_set=qualified dns=ok control=ok egress=distinct%s\n' \
+            "$tolerated_suffix"
     else
-        printf 'compose_guard runtime=ok healthy=%s unique_egress=%s dns=%s control=%s\n' \
-            "$expected_count" "${#egress_owner[@]}" "$expected_count" "$expected_count"
+        printf 'compose_guard runtime=ok healthy=%s unique_egress=%s dns=%s control=%s%s\n' \
+            "$probed_count" "${#egress_owner[@]}" "$probed_count" "$probed_count" \
+            "$tolerated_suffix"
     fi
 fi
 

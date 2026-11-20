@@ -936,6 +936,18 @@ profile routing overrides are rejected. The guard fixes the local daemon to
 `festivalservicetracker` project name and project directory, and does not
 reread mutable Compose pathnames for startup after validation.
 
+By default every effective proxy must be running and healthy and pass the DNS,
+control, HTTP-proxy, and distinct-egress probes. `--allow-unhealthy-proxies N`
+relaxes only the first requirement for `--check`, `--recreate`, and
+`--recover-start`: up to N effective proxies may be unhealthy, where N is at
+most a quarter of the effective set. Tolerated proxies skip the probes, and
+the rest must pass all of them. Under `--recover-start` the tolerated count
+also accepts a degraded result after the bounded proxy recreate, and replaces
+the recreate when the unhealthy count is over the recreate cap. Run-once
+actions reject the option. It exists for a deliberate operator restart after
+the pool drifted unhealthy while the worker was stopped (see
+[VPN proxy pool](../operations/vpn-proxy-pool.md#self-heal-boundary)).
+
 Recovery is effective-set-only, capped by stage windows and a 1,800-second
 default total deadline, and fail-closed. It does not accept `--config-only`,
 run-once/data profiles, or any `candidate-*` throughput profile. It does not

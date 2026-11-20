@@ -452,6 +452,20 @@ startup contract therefore has a separate host-side boundary:
 
 Non-effective canonical services are ignored, healthy services are not
 recreated, and no spare is promoted automatically. A failure starts no worker.
+
+The exits can drift unhealthy while the worker is stopped, because only the
+running worker refreshes them onto PIA's live server list. After the long
+2026-11-20 pause, four exits stayed unhealthy even after they were recreated,
+so steps 5 and 6 refused to start the worker that would have repaired them.
+For that case an operator may pass `--allow-unhealthy-proxies N` to
+`--recover-start`, `--recreate`, or `--check`. N defaults to 0 and may be at
+most a quarter of the effective set. With it, step 5 still recreates the
+unhealthy exits when they are within the recreate cap, and skips recreation
+when they are over the cap but within N. The worker starts when no more than
+N exits are still unhealthy at the end of the window. Step 6 skips the
+tolerated exits and runs every probe on the rest. Output lists each tolerated
+exit and an `unhealthy_tolerated` count. Run-once actions do not accept the
+option, and the boot handoff does not pass it.
 After worker start, cleanup stops it only while the operational state remains
 idle and unfrozen; active/frozen work remains running for the no-progress
 watchdog. Core service containers are never restarted by this path.
