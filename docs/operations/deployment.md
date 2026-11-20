@@ -315,6 +315,21 @@ from the `1510` boundary (`159dbe28`), all now merged. The worker env adds:
   followed by ordinary failure isolation (`scrape_acquisition_failed`) released
   it, and `--recreate` then started the worker. Published scrape `2148` stayed
   current throughout.
+- Scrape `2151` met the same 429s and stalled after about 4,580 of 6,903
+  leaderboards, so the operator stopped the worker at 07:37Z for a cooldown,
+  and `2151` was released the same way as `2150`. With the worker stopped, the
+  PIA exits drifted unhealthy (TLS failures against the stale server lists
+  baked into the Gluetun images). `--recreate` and `--recover-start` refused to
+  start the worker because not all 75 exits were healthy, and four exits
+  stayed unhealthy even after recovery. With operator approval, and with the
+  proxy regions unchanged, the worker was started at 17:16Z under the guard
+  lock with
+  `docker compose ... --profile worker up -d --no-deps fstworker`. That step
+  skipped only the guard's all-exits-healthy gate. The worker's region refresh
+  then repaired the exits it could (57 to 63 healthy within two hours). Scrape
+  `2152` saw no HTTP 429s, fetched all 6,903 leaderboards in about 24 minutes,
+  and published at 19:37Z. The incident is recorded in
+  [VPN proxy pool](vpn-proxy-pool.md#november-2026-account-wide-429s).
 
 Check the running image's
 `org.opencontainers.image.revision` label before deploying a master image:
