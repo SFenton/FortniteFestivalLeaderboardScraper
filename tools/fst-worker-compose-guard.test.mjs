@@ -1410,6 +1410,179 @@ describe("fstworker Compose startup recovery", () => {
     }
   });
 
+  it("accepts a persistently unhealthy proxy within the allowance after recreating it", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ effectiveCount: 8 }),
+      scenario: {
+        proxyStates: {
+          "pia-gluetun-1": "running|unhealthy"
+        },
+        persistentUnhealthy: ["pia-gluetun-1"]
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recover-start",
+        "--allow-unhealthy-proxies",
+        "1"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), [
+        "proxy-recreate|pia-gluetun-1",
+        "worker-start|fstworker"
+      ]);
+      assert.match(
+        result.stdout,
+        /phase=post-recreate status=degraded unhealthy=1 allowed_unhealthy=1/
+      );
+      assert.match(result.stdout, /tolerated-unhealthy proxy=pia-gluetun-1 /);
+      assert.match(result.stdout, /egress=distinct unhealthy_tolerated=1/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("skips proxy recreation over the cap when the allowance covers every unhealthy proxy", async () => {
+    const unhealthy = [1, 2, 3, 4, 5].map((index) => `pia-gluetun-${index}`);
+    const harness = await createHarness({
+      config: buildComposeConfig({ effectiveCount: 20 }),
+      scenario: {
+        proxyStates: Object.fromEntries(
+          unhealthy.map((name) => [name, "running|unhealthy"])
+        ),
+        persistentUnhealthy: unhealthy
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recover-start",
+        "--allow-unhealthy-proxies",
+        "5"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await harness.events(), ["worker-start|fstworker"]);
+      assert.match(result.stdout, /proxy-recreate skipped=over-cap count=5/);
+      assert.match(result.stdout, /unhealthy_tolerated=5/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("fails closed when unhealthy proxies exceed the allowance", async () => {
+    const harness = await createHarness({
+      config: buildComposeConfig({ effectiveCount: 8 }),
+      scenario: {
+        proxyStates: {
+          "pia-gluetun-1": "running|unhealthy",
+          "pia-gluetun-2": "running|unhealthy"
+        },
+        persistentUnhealthy: ["pia-gluetun-1", "pia-gluetun-2"]
+      }
+    });
+    try {
+      const result = await harness.run([
+        "--recover-start",
+        "--allow-unhealthy-proxies",
+        "1"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await harness.events(), [
+        "proxy-recreate|pia-gluetun-1|pia-gluetun-2"
+      ]);
+      assert.match(result.stderr, /did not become healthy/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("lets --recreate start the worker with unhealthy proxies only within the allowance", async () => {
+    const scenario = {
+      proxyStates: {
+        "pia-gluetun-2": "running|unhealthy",
+        "pia-gluetun-5": "exited|none"
+      }
+    };
+    const config = buildComposeConfig({ effectiveCount: 8 });
+    const strict = await createHarness({ config, scenario });
+    try {
+      const result = await strict.run(["--recreate"]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await strict.events(), []);
+      assert.match(result.stderr, /pia-gluetun-2 is not running and healthy/);
+    } finally {
+      await strict.cleanup();
+    }
+
+    const tooFew = await createHarness({ config, scenario });
+    try {
+      const result = await tooFew.run([
+        "--recreate",
+        "--allow-unhealthy-proxies",
+        "1"
+      ]);
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await tooFew.events(), []);
+      assert.match(result.stderr, /more than 1 effective proxies are unhealthy/);
+    } finally {
+      await tooFew.cleanup();
+    }
+
+    const allowed = await createHarness({ config, scenario });
+    try {
+      const result = await allowed.run([
+        "--recreate",
+        "--allow-unhealthy-proxies",
+        "2"
+      ]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(await allowed.events(), ["worker-start|fstworker"]);
+      assert.match(
+        result.stdout,
+        /runtime=ok healthy=6 unique_egress=6 dns=6 control=6 unhealthy_tolerated=2/
+      );
+    } finally {
+      await allowed.cleanup();
+    }
+  });
+
+  it("validates --allow-unhealthy-proxies before any mutation", async () => {
+    const cases = [
+      {
+        args: ["--recover-start", "--allow-unhealthy-proxies", "two"],
+        expected: /must be a non-negative integer/
+      },
+      {
+        args: [
+          "--recreate-runonce",
+          "--data-profile",
+          "snapshot-reuse",
+          "--expected-worker-image",
+          "example.invalid/fstworker:test",
+          "--allow-unhealthy-proxies",
+          "1"
+        ],
+        expected: /requires --check, --recreate, or --recover-start/
+      },
+      {
+        args: ["--recover-start", "--allow-unhealthy-proxies", "3"],
+        expected: /exceeds a quarter of the 8 effective proxies/
+      }
+    ];
+    for (const testCase of cases) {
+      const harness = await createHarness({
+        config: buildComposeConfig({ effectiveCount: 8 })
+      });
+      try {
+        const result = await harness.run(testCase.args);
+        assert.equal(result.code, 64, result.stderr);
+        assert.deepEqual(await harness.events(), []);
+        assert.match(result.stderr, testCase.expected);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+  });
+
   it("enforces the total deadline before proxy or worker mutation", async () => {
     const harness = await createHarness({
       scenario: {
