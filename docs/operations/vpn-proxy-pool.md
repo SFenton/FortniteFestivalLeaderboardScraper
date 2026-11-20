@@ -121,6 +121,25 @@ acquisition near 7–10 successful requests per second, with each exit cooled
 about 95% of the time. Changing the region label alone does not help; what
 matters is a **new, rested egress IP**.
 
+#### November 2026: account-wide 429s
+
+From scrape `2149` (started 2026-11-18 21:04Z) the 429s stopped following the
+per-IP pattern above. All 75 exits were held back at once. Freshly refreshed
+egresses failed after zero or one successful request, and the whole pool
+leaked about one successful request per second. `2149` ran for more than 960
+minutes with about 602,000 retries and failed band scope completeness. `2150`
+logged about 594,000 retries at about 57 successful requests per minute,
+against about 18,500 normally. `2151` stalled on deep 100-page leaderboards.
+The same exits got Epic's normal HTTP 401 for unauthenticated requests, so the
+IPs themselves were not blocked. That points to a limit on the Epic account
+or token, but this was not tested.
+
+The worker was stopped from 2026-11-20 07:37Z to 17:16Z. After it restarted,
+scrape `2152` saw no 429s and ran at its normal pace. It is not known whether
+the pause reset the limit or Epic lifted it on its own. Region refresh cannot
+work around a limit of this kind. When every exit is throttled within seconds
+of a refresh, a long pause of the worker is the only remedy found so far.
+
 #### Trigger and scheduling
 
 After the configured count of consecutive HTTP 429s for one exit (production
